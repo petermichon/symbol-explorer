@@ -21,7 +21,12 @@ import {
   X,
 } from "lucide-react";
 import "./index.css";
-import { buildViewDataFromFiles } from "./browserParser";
+import {
+  parseFilesMinimal,
+  ParsedData,
+  buildGraphFromMinimal,
+  extractSymbolsFromFile,
+} from "./browserParser";
 
 // IndexedDB helper for persisting directory handles
 async function openDirectoryDB(): Promise<IDBDatabase> {
@@ -293,10 +298,7 @@ function App() {
     nodes: any[];
     edges: any[];
   } | null>(null);
-  const [viewData, setViewData] = useState<{
-    elements: any[];
-    connections: any[];
-  } | null>(null);
+  const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [directoryHandle, setDirectoryHandle] = useState<any>(null);
   const [savedDirectories, setSavedDirectories] = useState<any[]>([]);
@@ -444,72 +446,33 @@ function App() {
     return { folderMap: map, colorScale: scale };
   }, [generatedNodes]);
 
-  // Build hierarchical folder/file tree structure (based on all elements for sidebar)
+  // Build hierarchical folder/file tree structure from file paths
   const treeStructure = useMemo(() => {
-    if (!viewData) return {};
+    if (!parsedData) return {};
 
     const tree: Record<string, any> = {};
 
-    viewData.elements.forEach((element: any) => {
-      if (element.kind === "folder") {
-        const path = element.id;
-        const parts = path.split("/");
-        let current = tree;
+    parsedData.files.forEach((file) => {
+      const path = file.path;
+      const parts = path.split("/");
+      let current = tree;
 
-        parts.forEach((part: string, index: number) => {
-          if (!current[part]) {
-            current[part] = {
-              type: "folder",
-              children: {},
-              symbols: [],
-            };
-          }
-          if (index < parts.length - 1) {
-            current = current[part].children;
-          }
-        });
-      } else if (element.kind === "file") {
-        const path = element.id;
-        const parts = path.split("/");
-        let current = tree;
-
-        parts.forEach((part: string, index: number) => {
-          if (!current[part]) {
-            current[part] = {
-              type: index === parts.length - 1 ? "file" : "folder",
-              children: {},
-              symbols: [],
-            };
-          }
-          if (index === parts.length - 1) {
-            // This is a file
-          } else {
-            current = current[part].children;
-          }
-        });
-      } else if (element.kind === "symbol") {
-        const parentId = element.parentId;
-        if (!parentId) return;
-
-        const parts = parentId.split("/");
-        let current = tree;
-
-        parts.forEach((part: string, index: number) => {
-          if (!current[part]) {
-            current[part] = {
-              type: index === parts.length - 1 ? "file" : "folder",
-              children: {},
-              symbols: [],
-            };
-          }
-          if (index === parts.length - 1) {
-            // This is a file, increment symbol count
-            current[part].symbols.push(element.name);
-          } else {
-            current = current[part].children;
-          }
-        });
-      }
+      parts.forEach((part: string, index: number) => {
+        if (!current[part]) {
+          current[part] = {
+            type: index === parts.length - 1 ? "file" : "folder",
+            children: {},
+            symbols: [],
+          };
+        }
+        if (index === parts.length - 1) {
+          // This is a file - extract symbols
+          const symbols = extractSymbolsFromFile(file.content, file.path);
+          current[part].symbols = symbols.map((s) => s.name);
+        } else {
+          current = current[part].children;
+        }
+      });
     });
 
     // Calculate total symbols for each folder recursively
@@ -530,7 +493,7 @@ function App() {
     }
 
     return tree;
-  }, [viewData]);
+  }, [parsedData]);
 
   const toggleFolder = useCallback((folder: string) => {
     setExpandedFolders((prev) => {
@@ -706,46 +669,21 @@ function App() {
 
         console.log(`Loaded ${files.length} TypeScript files`);
 
-        // Parse the files to build the view data
-        const viewData = buildViewDataFromFiles(files);
+        // Parse the files to get minimal data format
+        const data = parseFilesMinimal(files);
         console.log(
-          `Parsed ${viewData.elements.length} elements and ${viewData.connections.length} connections`,
+          `Parsed ${data.files.length} files and ${data.imports.length} imports`,
         );
 
-        // Convert to the format expected by the graph (for now, keep using nodes/edges for backward compatibility)
-        const symbolElements = viewData.elements.filter(
-          (el) => el.kind === "symbol",
-        );
-        const parsedData = {
-          nodes: symbolElements.map((el) => {
-            const pathParts = el.parentId?.split("/") || [];
-            const fileName = pathParts[pathParts.length - 1] || "";
-            const folder = pathParts.slice(0, -1).join("/");
-            return {
-              id: el.id,
-              position: { x: 0, y: 0 },
-              type: "endpoint",
-              data: {
-                label: el.name,
-                file: fileName,
-                folder,
-                symbolType: el.metadata.symbolType,
-                hasUnknownDynamicImport:
-                  el.metadata.hasUnknownDynamicImport || false,
-              },
-            };
-          }),
-          edges: viewData.connections.map((conn) => ({
-            id: conn.id,
-            source: conn.source,
-            target: conn.target,
-            type: conn.type,
-            label: conn.label,
-          })),
-        };
+        setParsedData(data);
 
-        setCustomData(parsedData);
-        setViewData(viewData);
+        // Build graph data from minimal format
+        const graphData = buildGraphFromMinimal(data);
+        console.log(
+          `Built ${graphData.nodes.length} nodes and ${graphData.edges.length} edges`,
+        );
+
+        setCustomData(graphData);
       } catch (err) {
         const errorMessage = (err as Error).message;
         // Don't alert for permission errors - they're expected when handles lack user gesture

@@ -1,5 +1,22 @@
 import * as ts from "typescript";
 
+export interface FileData {
+  path: string;
+  content: string;
+}
+
+export interface ImportData {
+  source: string;
+  target: string;
+  type: "import" | "wildcard" | "re-export" | "dynamic";
+}
+
+export interface ParsedData {
+  files: FileData[];
+  imports: ImportData[];
+}
+
+// Legacy interfaces for backward compatibility during transition
 export interface Element {
   id: string;
   name: string;
@@ -32,8 +49,6 @@ export interface ViewData {
   elements: Element[];
   connections: Connection[];
 }
-
-// Legacy interfaces for backward compatibility during transition
 export interface SymbolNode {
   id: string;
   name: string;
@@ -337,6 +352,7 @@ export function extractSymbolsFromFile(
   return symbols;
 }
 
+// @deprecated Use parseFilesMinimal + buildGraphFromMinimal instead
 export function buildViewDataFromFiles(files: FileData[]): ViewData {
   const elements: Element[] = [];
   const connections: Connection[] = [];
@@ -761,4 +777,180 @@ export function buildViewDataFromFiles(files: FileData[]): ViewData {
   });
 
   return { elements, connections };
+}
+
+// New minimal parser - outputs raw files and import relationships
+export function parseFilesMinimal(files: FileData[]): ParsedData {
+  const imports: ImportData[] = [];
+
+  files.forEach((file) => {
+    const {
+      imports: fileImports,
+      wildcardImports,
+      dynamicImports,
+    } = extractImports(file.content);
+    const dirPath = file.path.split("/").slice(0, -1).join("/");
+
+    // Handle regular imports
+    [...fileImports, ...wildcardImports].forEach((importPath) => {
+      if (importPath.startsWith(".")) {
+        // Resolve relative import
+        const parts = importPath.split("/");
+        const basePath = dirPath ? dirPath.split("/") : [];
+        parts.forEach((part) => {
+          if (part === "..") {
+            basePath.pop();
+          } else if (part !== ".") {
+            basePath.push(part);
+          }
+        });
+        const resolvedPath = basePath.join("/");
+
+        const targetPath =
+          resolvedPath.endsWith(".ts") || resolvedPath.endsWith(".tsx")
+            ? resolvedPath
+            : `${resolvedPath}.ts`;
+
+        imports.push({
+          source: file.path,
+          target: targetPath,
+          type: wildcardImports.includes(importPath) ? "wildcard" : "import",
+        });
+      }
+    });
+
+    // Handle dynamic imports
+    dynamicImports.forEach((dynamicImport) => {
+      if (
+        dynamicImport.isStringLiteral &&
+        dynamicImport.module.startsWith(".")
+      ) {
+        const parts = dynamicImport.module.split("/");
+        const basePath = dirPath ? dirPath.split("/") : [];
+        parts.forEach((part) => {
+          if (part === "..") {
+            basePath.pop();
+          } else if (part !== ".") {
+            basePath.push(part);
+          }
+        });
+        const resolvedPath = basePath.join("/");
+
+        const targetPath =
+          resolvedPath.endsWith(".ts") || resolvedPath.endsWith(".tsx")
+            ? resolvedPath
+            : `${resolvedPath}.ts`;
+
+        imports.push({
+          source: file.path,
+          target: targetPath,
+          type: "dynamic",
+        });
+      }
+    });
+  });
+
+  return { files, imports };
+}
+
+// Build graph nodes and edges from minimal data format
+export function buildGraphFromMinimal(data: ParsedData): {
+  nodes: any[];
+  edges: any[];
+} {
+  const nodes: any[] = [];
+  const edges: any[] = [];
+  const fileToSymbols = new Map<string, any[]>();
+
+  // Extract symbols from all files
+  data.files.forEach((file) => {
+    const symbols = extractSymbolsFromFile(file.content, file.path);
+    fileToSymbols.set(file.path, symbols);
+
+    symbols.forEach((symbol) => {
+      const pathParts = file.path.split("/");
+      const fileName = pathParts[pathParts.length - 1] || "";
+      const folder = pathParts.slice(0, -1).join("/");
+
+      nodes.push({
+        id: symbol.id,
+        position: { x: 0, y: 0 },
+        type: "endpoint",
+        data: {
+          label: symbol.name,
+          file: fileName,
+          folder,
+          symbolType: symbol.type,
+          hasUnknownDynamicImport: symbol.hasUnknownDynamicImport || false,
+        },
+      });
+    });
+  });
+
+  // Build edges from imports
+  const edgeKeyCount = new Map<string, number>();
+
+  data.imports.forEach((importData) => {
+    const sourceSymbols = fileToSymbols.get(importData.source);
+    if (!sourceSymbols) return;
+
+    const targetSymbols = fileToSymbols.get(importData.target);
+    if (!targetSymbols) return;
+
+    const targetExports = targetSymbols.filter((s) => s.isExport);
+
+    sourceSymbols.forEach((sourceSymbol) => {
+      targetExports.forEach((targetSymbol) => {
+        const edgeKey = `${sourceSymbol.id}-${targetSymbol.id}`;
+        if (!edgeKeyCount.has(edgeKey)) {
+          edges.push({
+            id: `e-${edgeKey}`,
+            source: sourceSymbol.id,
+            target: targetSymbol.id,
+            type: importData.type,
+            label:
+              importData.type === "wildcard" ? "namespace import" : "import",
+          });
+          edgeKeyCount.set(edgeKey, 1);
+        }
+      });
+    });
+  });
+
+  // Add intra-file edges
+  fileToSymbols.forEach((symbols) => {
+    for (let i = 0; i < symbols.length; i++) {
+      for (let j = i + 1; j < symbols.length; j++) {
+        const symbol1 = symbols[i];
+        const symbol2 = symbols[j];
+
+        const edgeKey1 = `${symbol1.id}-${symbol2.id}`;
+        const edgeKey2 = `${symbol2.id}-${symbol1.id}`;
+
+        if (!edgeKeyCount.has(edgeKey1)) {
+          edges.push({
+            id: `e-${edgeKey1}`,
+            source: symbol1.id,
+            target: symbol2.id,
+            type: "intra-file",
+            label: "file",
+          });
+          edgeKeyCount.set(edgeKey1, 1);
+        }
+
+        if (!edgeKeyCount.has(edgeKey2)) {
+          edges.push({
+            id: `e-${edgeKey2}`,
+            source: symbol2.id,
+            target: symbol1.id,
+            type: "intra-file",
+            label: "file",
+          });
+          edgeKeyCount.set(edgeKey2, 1);
+        }
+      }
+    }
+  });
+
+  return { nodes, edges };
 }
