@@ -1,0 +1,62 @@
+@import 'tailwindcss';
+
+body {
+  font-family: system-ui;
+  margin: 0;
+  padding: 0;
+  @apply bg-neutral-950 text-neutral-400;
+}
+
+/* Prevent text selection on buttons */
+button {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Tooltip fade-in animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-neutral-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-neutral-700 rounded-md;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-neutral-600;
+}
+
+/* React Flow Controls styling */
+.react-flow__controls {
+  @apply bg-neutral-900 border border-neutral-800 rounded-md gap-1;
+}
+
+.react-flow__controls-button {
+  @apply bg-neutral-900 border border-neutral-800 fill-neutral-400 rounded;
+}
+
+.react-flow__controls-button:hover {
+  @apply bg-neutral-800;
+}
+
+/* React Flow Background styling */
+.react-flow__background {
+  opacity: 0.4;
+}
