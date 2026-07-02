@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
+import { createPortal } from "react-dom";
 import * as d3 from "d3";
 import {
   Folder,
   File,
-  Box,
   Eye,
   EyeOff,
   CopyMinus,
@@ -17,9 +17,29 @@ import {
   RefreshCw,
   Settings,
   FolderOpen,
+  FolderSymlink,
+  X,
 } from "lucide-react";
 import "./index.css";
-import { buildSymbolGraphFromFiles } from "./browserParser";
+import { buildViewDataFromFiles } from "./browserParser";
+
+// IndexedDB helper for persisting directory handles
+async function openDirectoryDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("SymbolExplorerDB", 2);
+
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains("directories")) {
+        const store = db.createObjectStore("directories", { keyPath: "id" });
+        store.createIndex("timestamp", "timestamp", { unique: false });
+      }
+    };
+  });
+}
 
 function ViewModeButton({
   mode,
@@ -98,15 +118,9 @@ function TreeNode({
   toggleFolder,
   hiddenPaths,
   togglePathVisibility,
-  hiddenNodes,
-  toggleNodeVisibility,
   colorScale,
-  onHoverSymbol,
   onHoverFile,
   onHoverFolder,
-  hoveredSymbolId,
-  onSelectSymbol,
-  selectedNodeId,
 }: any) {
   // Helper to check if a path or any of its parents is hidden
   const isPathOrParentHidden = (itemPath: string): boolean => {
@@ -189,104 +203,10 @@ function TreeNode({
                     toggleFolder={toggleFolder}
                     hiddenPaths={hiddenPaths}
                     togglePathVisibility={togglePathVisibility}
-                    hiddenNodes={hiddenNodes}
-                    toggleNodeVisibility={toggleNodeVisibility}
                     colorScale={colorScale}
-                    onHoverSymbol={onHoverSymbol}
                     onHoverFile={onHoverFile}
                     onHoverFolder={onHoverFolder}
-                    hoveredSymbolId={hoveredSymbolId}
-                    onSelectSymbol={onSelectSymbol}
-                    selectedNodeId={selectedNodeId}
                   />
-                </div>
-              )}
-              {isExpanded && !isFolder && (
-                <div className="ml-4 mt-1">
-                  {item.symbols.sort().map((symbol: string) => {
-                    const symbolId = `${fullPath}.${symbol}`;
-                    const isHovered = hoveredSymbolId === symbolId;
-                    const isSelected = selectedNodeId === symbolId;
-                    const isNodeHidden = hiddenNodes.has(symbolId);
-                    const isParentHidden = isPathOrParentHidden(fullPath);
-                    return (
-                      <div
-                        key={symbol}
-                        ref={
-                          isSelected
-                            ? (el: HTMLDivElement) => {
-                                if (el) {
-                                  requestAnimationFrame(() => {
-                                    const scrollContainer = el.closest(
-                                      ".overflow-y-scroll",
-                                    ) as HTMLElement;
-                                    if (scrollContainer) {
-                                      const containerRect =
-                                        scrollContainer.getBoundingClientRect();
-                                      const elementRect =
-                                        el.getBoundingClientRect();
-                                      const offsetTop =
-                                        elementRect.top -
-                                        containerRect.top +
-                                        scrollContainer.scrollTop;
-                                      const containerHeight =
-                                        containerRect.height;
-
-                                      // Center the element in the viewport
-                                      const targetScroll =
-                                        offsetTop -
-                                        containerHeight / 2 +
-                                        elementRect.height / 2;
-                                      scrollContainer.scrollTop = targetScroll;
-                                    }
-                                  });
-                                }
-                              }
-                            : null
-                        }
-                        className={`text-sm px-2 py-0.5 truncate cursor-pointer rounded flex items-center gap-1 group ${
-                          isSelected
-                            ? "bg-neutral-500"
-                            : isHovered
-                              ? "bg-neutral-600"
-                              : "hover:bg-neutral-700"
-                        }`}
-                        style={{
-                          color: folderColor,
-                          opacity: isNodeHidden || isParentHidden ? 0.5 : 1,
-                        }}
-                        onMouseEnter={() => {
-                          onHoverSymbol(symbolId);
-                        }}
-                        onMouseLeave={() => {
-                          onHoverSymbol(null);
-                        }}
-                        onClick={() => onSelectSymbol(symbolId)}
-                      >
-                        <Box
-                          size={16}
-                          className="shrink-0"
-                          style={{ color: folderColor }}
-                        />
-                        <span className="truncate flex-1">{symbol}</span>
-                        <Tooltip content={isNodeHidden ? "Show" : "Hide"}>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleNodeVisibility(symbolId);
-                            }}
-                            className={`${isNodeHidden ? "" : "hidden group-hover:block"} cursor-pointer text-neutral-300`}
-                          >
-                            {isNodeHidden ? (
-                              <EyeOff size={14} />
-                            ) : (
-                              <Eye size={14} />
-                            )}
-                          </button>
-                        </Tooltip>
-                      </div>
-                    );
-                  })}
                 </div>
               )}
             </div>
@@ -326,11 +246,6 @@ function App() {
     const saved = localStorage.getItem("hiddenPaths");
     return saved !== null ? new Set(JSON.parse(saved)) : new Set();
   });
-  const [hiddenNodes, setHiddenNodes] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem("hiddenNodes");
-    return saved !== null ? new Set(JSON.parse(saved)) : new Set();
-  });
-  const [hoveredSymbolId, setHoveredSymbolId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredEdges, setHoveredEdges] = useState<any[]>([]);
   const hoveredEdgesRef = useRef<any[]>([]);
@@ -378,25 +293,30 @@ function App() {
     nodes: any[];
     edges: any[];
   } | null>(null);
+  const [viewData, setViewData] = useState<{
+    elements: any[];
+    connections: any[];
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [directoryHandle, setDirectoryHandle] = useState<any>(null);
+  const [savedDirectories, setSavedDirectories] = useState<any[]>([]);
+  const [showDirectoryDropdown, setShowDirectoryDropdown] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+  const folderButtonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const supportsFileSystemAccess = "showDirectoryPicker" in window;
 
   const { nodes: generatedNodes, edges: generatedEdges } = useMemo(
     () => (customData ? customData : { nodes: [], edges: [] }),
     [customData],
   );
 
-  // Filter nodes and edges based on hidden folders, files, and individual nodes
+  // Filter nodes and edges based on hidden folders and files
   const { filteredNodes, filteredEdges } = useMemo(() => {
     const hiddenSet = hiddenPaths;
-    const hiddenNodeSet = hiddenNodes;
 
     const visibleNodes = generatedNodes.filter((node: any) => {
-      // Check if this specific node is hidden
-      if (hiddenNodeSet.has(node.id)) {
-        return false;
-      }
-
       const folder = node.data.folder || "root";
       const file = node.data.file || "";
 
@@ -431,22 +351,7 @@ function App() {
     });
 
     return { filteredNodes: visibleNodes, filteredEdges: visibleEdges };
-  }, [generatedNodes, generatedEdges, hiddenPaths, hiddenNodes]);
-
-  const handleHoverSymbol = useCallback(
-    (nodeId: string | null) => {
-      if (nodeId === null) {
-        hoveredNodeRef.current = null;
-      } else {
-        const node = filteredNodes.find((n: any) => n.id === nodeId);
-        hoveredNodeRef.current = node || null;
-      }
-      if (drawRef.current) {
-        drawRef.current();
-      }
-    },
-    [filteredNodes],
-  );
+  }, [generatedNodes, generatedEdges, hiddenPaths]);
 
   const handleHoverFile = useCallback(
     (filePath: string | null) => {
@@ -539,36 +444,72 @@ function App() {
     return { folderMap: map, colorScale: scale };
   }, [generatedNodes]);
 
-  // Build hierarchical folder/file tree structure (based on all nodes for sidebar)
+  // Build hierarchical folder/file tree structure (based on all elements for sidebar)
   const treeStructure = useMemo(() => {
+    if (!viewData) return {};
+
     const tree: Record<string, any> = {};
 
-    generatedNodes.forEach((node: any) => {
-      const lastDotIndex = node.id.lastIndexOf(".");
-      if (lastDotIndex === -1) return;
-      const filePath = node.id.substring(0, lastDotIndex);
-      const symbolName = node.id.substring(lastDotIndex + 1);
+    viewData.elements.forEach((element: any) => {
+      if (element.kind === "folder") {
+        const path = element.id;
+        const parts = path.split("/");
+        let current = tree;
 
-      // Split path into parts
-      const parts = filePath.split("/");
-      let current = tree;
+        parts.forEach((part: string, index: number) => {
+          if (!current[part]) {
+            current[part] = {
+              type: "folder",
+              children: {},
+              symbols: [],
+            };
+          }
+          if (index < parts.length - 1) {
+            current = current[part].children;
+          }
+        });
+      } else if (element.kind === "file") {
+        const path = element.id;
+        const parts = path.split("/");
+        let current = tree;
 
-      parts.forEach((part: string, index: number) => {
-        if (!current[part]) {
-          current[part] = {
-            type: index === parts.length - 1 ? "file" : "folder",
-            children: {},
-            symbols: [],
-          };
-        }
-        if (index === parts.length - 1) {
-          // This is a file, add the symbol
-          current[part].symbols.push(symbolName);
-        } else {
-          // This is a folder, move to children
-          current = current[part].children;
-        }
-      });
+        parts.forEach((part: string, index: number) => {
+          if (!current[part]) {
+            current[part] = {
+              type: index === parts.length - 1 ? "file" : "folder",
+              children: {},
+              symbols: [],
+            };
+          }
+          if (index === parts.length - 1) {
+            // This is a file
+          } else {
+            current = current[part].children;
+          }
+        });
+      } else if (element.kind === "symbol") {
+        const parentId = element.parentId;
+        if (!parentId) return;
+
+        const parts = parentId.split("/");
+        let current = tree;
+
+        parts.forEach((part: string, index: number) => {
+          if (!current[part]) {
+            current[part] = {
+              type: index === parts.length - 1 ? "file" : "folder",
+              children: {},
+              symbols: [],
+            };
+          }
+          if (index === parts.length - 1) {
+            // This is a file, increment symbol count
+            current[part].symbols.push(element.name);
+          } else {
+            current = current[part].children;
+          }
+        });
+      }
     });
 
     // Calculate total symbols for each folder recursively
@@ -589,7 +530,7 @@ function App() {
     }
 
     return tree;
-  }, [generatedNodes]);
+  }, [viewData]);
 
   const toggleFolder = useCallback((folder: string) => {
     setExpandedFolders((prev) => {
@@ -617,30 +558,16 @@ function App() {
     });
   }, []);
 
-  const toggleNodeVisibility = useCallback((nodeId: string) => {
-    setHiddenNodes((prev: Set<string>) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      return next;
-    });
-  }, []);
-
   const collapseAll = useCallback(() => {
     setExpandedFolders(new Set());
   }, []);
 
   const showAll = useCallback(() => {
     setHiddenPaths(new Set());
-    setHiddenNodes(new Set());
   }, []);
 
   const hideAll = useCallback(() => {
     const pathsToHide = new Set<string>();
-    const nodesToHide = new Set<string>();
 
     function collectVisibleItems(node: any, currentPath: string = "") {
       Object.entries(node).forEach(([name, item]: [string, any]) => {
@@ -650,16 +577,9 @@ function App() {
           if (expandedFolders.has(fullPath)) {
             // Folder is expanded, hide its direct children
             Object.entries(item.children).forEach(
-              ([childName, childItem]: [string, any]) => {
+              ([childName, _childItem]: [string, any]) => {
                 const childPath = `${fullPath}/${childName}`;
-                if (childItem.type === "folder") {
-                  pathsToHide.add(childPath);
-                } else if (childItem.type === "file") {
-                  pathsToHide.add(childPath);
-                  childItem.symbols.forEach((symbol: string) => {
-                    nodesToHide.add(`${childPath}.${symbol}`);
-                  });
-                }
+                pathsToHide.add(childPath);
               },
             );
           } else {
@@ -670,16 +590,12 @@ function App() {
           // Files are only visible if their parent folder is expanded
           // If we reach a file, its parent must be expanded, so hide it
           pathsToHide.add(fullPath);
-          item.symbols.forEach((symbol: string) => {
-            nodesToHide.add(`${fullPath}.${symbol}`);
-          });
         }
       });
     }
 
     collectVisibleItems(treeStructure);
     setHiddenPaths(pathsToHide);
-    setHiddenNodes(nodesToHide);
   }, [treeStructure, expandedFolders]);
 
   const toggleSimulationLock = useCallback(() => {
@@ -752,12 +668,128 @@ function App() {
     setExpandedFolders(allPaths);
   }, [treeStructure]);
 
+  const loadDirectoryData = useCallback(
+    async (
+      dirHandle: any | null,
+      fallbackFiles?: { path: string; content: string }[],
+    ) => {
+      try {
+        setIsLoading(true);
+        const files: { path: string; content: string }[] = [];
+
+        if (dirHandle) {
+          async function* getFiles(
+            dirHandle: any,
+            path: string = "",
+          ): AsyncGenerator<{ path: string; content: string }> {
+            for await (const entry of dirHandle.values()) {
+              const entryPath = path ? `${path}/${entry.name}` : entry.name;
+              if (
+                entry.kind === "file" &&
+                (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))
+              ) {
+                const file = await entry.getFile();
+                const content = await file.text();
+                yield { path: entryPath, content };
+              } else if (entry.kind === "directory") {
+                yield* getFiles(entry, entryPath);
+              }
+            }
+          }
+
+          for await (const file of getFiles(dirHandle)) {
+            files.push(file);
+          }
+        } else if (fallbackFiles) {
+          files.push(...fallbackFiles);
+        }
+
+        console.log(`Loaded ${files.length} TypeScript files`);
+
+        // Parse the files to build the view data
+        const viewData = buildViewDataFromFiles(files);
+        console.log(
+          `Parsed ${viewData.elements.length} elements and ${viewData.connections.length} connections`,
+        );
+
+        // Convert to the format expected by the graph (for now, keep using nodes/edges for backward compatibility)
+        const symbolElements = viewData.elements.filter(
+          (el) => el.kind === "symbol",
+        );
+        const parsedData = {
+          nodes: symbolElements.map((el) => {
+            const pathParts = el.parentId?.split("/") || [];
+            const fileName = pathParts[pathParts.length - 1] || "";
+            const folder = pathParts.slice(0, -1).join("/");
+            return {
+              id: el.id,
+              position: { x: 0, y: 0 },
+              type: "endpoint",
+              data: {
+                label: el.name,
+                file: fileName,
+                folder,
+                symbolType: el.metadata.symbolType,
+                hasUnknownDynamicImport:
+                  el.metadata.hasUnknownDynamicImport || false,
+              },
+            };
+          }),
+          edges: viewData.connections.map((conn) => ({
+            id: conn.id,
+            source: conn.source,
+            target: conn.target,
+            type: conn.type,
+            label: conn.label,
+          })),
+        };
+
+        setCustomData(parsedData);
+        setViewData(viewData);
+      } catch (err) {
+        console.error("Error loading directory data:", err);
+        alert("Error loading directory data: " + (err as Error).message);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [],
+  );
+
   const handleDirectoryPicker = useCallback(async () => {
     try {
       setIsLoading(true);
-      const dirHandle = await (window as any).showDirectoryPicker();
+      const dirHandle = await (window as any).showDirectoryPicker({
+        mode: "read",
+      });
       setDirectoryHandle(dirHandle);
       await loadDirectoryData(dirHandle);
+
+      // Save to IndexedDB
+      try {
+        const db = await openDirectoryDB();
+        const tx = db.transaction("directories", "readwrite");
+        const store = tx.objectStore("directories");
+        const id = crypto.randomUUID();
+        await store.put({
+          id,
+          handle: dirHandle,
+          name: dirHandle.name,
+          timestamp: Date.now(),
+        });
+
+        // Refresh saved directories list
+        const getAllRequest = store.getAll();
+        const directories = await new Promise<any[]>((resolve, reject) => {
+          getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+          getAllRequest.onerror = () => reject(getAllRequest.error);
+        });
+        setSavedDirectories(
+          directories.sort((a, b) => b.timestamp - a.timestamp),
+        );
+      } catch (err) {
+        console.warn("Failed to save directory handle:", err);
+      }
     } catch (err) {
       console.error("Directory picker error:", err);
       if ((err as Error).name !== "AbortError") {
@@ -766,73 +798,157 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [loadDirectoryData]);
 
-  const loadDirectoryData = useCallback(async (dirHandle: any) => {
-    try {
+  const handleFallbackFileSelect = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (!files || files.length === 0) return;
+
+      setShowDirectoryDropdown(false);
       setIsLoading(true);
-      const files: { path: string; content: string }[] = [];
 
-      async function* getFiles(
-        dirHandle: any,
-        path: string = "",
-      ): AsyncGenerator<{ path: string; content: string }> {
-        for await (const entry of dirHandle.values()) {
-          const entryPath = path ? `${path}/${entry.name}` : entry.name;
-          if (
-            entry.kind === "file" &&
-            (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))
-          ) {
-            const file = await entry.getFile();
+      try {
+        const fileData: { path: string; content: string }[] = [];
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          if (file.name.endsWith(".ts") || file.name.endsWith(".tsx")) {
             const content = await file.text();
-            yield { path: entryPath, content };
-          } else if (entry.kind === "directory") {
-            yield* getFiles(entry, entryPath);
+            // Get the relative path from webkitRelativePath
+            const path = file.webkitRelativePath || file.name;
+            fileData.push({ path, content });
           }
         }
+
+        console.log(`Loaded ${fileData.length} TypeScript files via fallback`);
+        await loadDirectoryData(null, fileData);
+      } catch (err) {
+        console.error("Error loading files:", err);
+        alert("Error loading files: " + (err as Error).message);
+      } finally {
+        setIsLoading(false);
+        // Reset input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       }
+    },
+    [loadDirectoryData],
+  );
 
-      for await (const file of getFiles(dirHandle)) {
-        files.push(file);
+  const handleToggleDropdown = useCallback(() => {
+    if (!showDirectoryDropdown && folderButtonRef.current) {
+      const rect = folderButtonRef.current.getBoundingClientRect();
+      setDropdownPosition({ top: rect.bottom + 4, left: rect.left });
+    }
+    setShowDirectoryDropdown(!showDirectoryDropdown);
+  }, [showDirectoryDropdown]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!showDirectoryDropdown) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        folderButtonRef.current &&
+        !folderButtonRef.current.contains(event.target as Node) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setShowDirectoryDropdown(false);
       }
+    };
 
-      console.log(`Loaded ${files.length} TypeScript files`);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showDirectoryDropdown]);
 
-      // Parse the files to build the symbol graph
-      const symbolData = buildSymbolGraphFromFiles(files);
-      console.log(
-        `Parsed ${symbolData.nodes.length} symbols and ${symbolData.edges.length} edges`,
-      );
+  // Load saved directories on mount
+  useEffect(() => {
+    const loadSavedDirectories = async () => {
+      try {
+        const db = await openDirectoryDB();
+        const tx = db.transaction("directories", "readonly");
+        const store = tx.objectStore("directories");
+        const request = store.getAll();
 
-      // Convert to the format expected by the graph
-      const parsedData = {
-        nodes: symbolData.nodes.map((node) => ({
-          id: node.id,
-          position: { x: 0, y: 0 },
-          type: "endpoint",
-          data: {
-            label: node.name,
-            file: node.file,
-            folder: node.folder,
-            symbolType: node.type,
-            hasUnknownDynamicImport: node.hasUnknownDynamicImport || false,
-          },
-        })),
-        edges: symbolData.edges.map((edge, idx) => ({
-          id: `e-${edge.source}-${edge.target}-${idx}`,
-          source: edge.source,
-          target: edge.target,
-          type: edge.type,
-          label: edge.label,
-        })),
-      };
+        const directories = await new Promise<any[]>((resolve, reject) => {
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
 
-      setCustomData(parsedData);
+        const sortedDirectories = directories.sort(
+          (a, b) => b.timestamp - a.timestamp,
+        );
+        setSavedDirectories(sortedDirectories);
+
+        // Auto-load the most recent directory
+        if (sortedDirectories.length > 0) {
+          const mostRecent = sortedDirectories[0];
+          setDirectoryHandle(mostRecent.handle);
+          await loadDirectoryData(mostRecent.handle);
+        }
+      } catch (err) {
+        console.warn("Failed to load saved directories:", err);
+      }
+    };
+
+    loadSavedDirectories();
+  }, [loadDirectoryData]);
+
+  const handleLoadSavedDirectory = useCallback(
+    async (id: string) => {
+      const dir = savedDirectories.find((d) => d.id === id);
+      if (!dir) return;
+
+      try {
+        setIsLoading(true);
+        setDirectoryHandle(dir.handle);
+        await loadDirectoryData(dir.handle);
+
+        // Update timestamp to move to top
+        try {
+          const db = await openDirectoryDB();
+          const tx = db.transaction("directories", "readwrite");
+          const store = tx.objectStore("directories");
+          await store.put({
+            ...dir,
+            timestamp: Date.now(),
+          });
+
+          // Refresh list
+          const getAllRequest = store.getAll();
+          const directories = await new Promise<any[]>((resolve, reject) => {
+            getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+            getAllRequest.onerror = () => reject(getAllRequest.error);
+          });
+          setSavedDirectories(
+            directories.sort((a, b) => b.timestamp - a.timestamp),
+          );
+        } catch (err) {
+          console.warn("Failed to update directory timestamp:", err);
+        }
+      } catch (err) {
+        console.error("Error loading saved directory:", err);
+        alert("Error loading directory: " + (err as Error).message);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [savedDirectories, loadDirectoryData],
+  );
+
+  const handleRemoveDirectory = useCallback(async (id: string) => {
+    try {
+      const db = await openDirectoryDB();
+      const tx = db.transaction("directories", "readwrite");
+      const store = tx.objectStore("directories");
+      await store.delete(id);
+
+      setSavedDirectories((prev) => prev.filter((d) => d.id !== id));
     } catch (err) {
-      console.error("Error loading directory data:", err);
-      alert("Error loading directory data: " + (err as Error).message);
-    } finally {
-      setIsLoading(false);
+      console.error("Error removing directory:", err);
     }
   }, []);
 
@@ -843,22 +959,14 @@ function App() {
     }
     // Save current visibility states
     const savedHiddenPaths = new Set(hiddenPaths);
-    const savedHiddenNodes = new Set(hiddenNodes);
     const savedExpandedFolders = new Set(expandedFolders);
 
     await loadDirectoryData(directoryHandle);
 
     // Restore visibility states
     setHiddenPaths(savedHiddenPaths);
-    setHiddenNodes(savedHiddenNodes);
     setExpandedFolders(savedExpandedFolders);
-  }, [
-    directoryHandle,
-    loadDirectoryData,
-    hiddenPaths,
-    hiddenNodes,
-    expandedFolders,
-  ]);
+  }, [directoryHandle, loadDirectoryData, hiddenPaths, expandedFolders]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -2816,7 +2924,6 @@ function App() {
 
       if (found !== hoveredNodeRef.current) {
         hoveredNodeRef.current = found;
-        setHoveredSymbolId(found ? found.id : null);
         canvas.style.cursor = found
           ? "pointer"
           : hoveredEdgesList.length > 0
@@ -2956,7 +3063,6 @@ function App() {
     folderMap,
     colorScale,
     hiddenPaths,
-    hiddenNodes,
     edgeOpacity,
     viewMode,
   ]);
@@ -2986,14 +3092,6 @@ function App() {
       JSON.stringify(Array.from(hiddenPaths)),
     );
   }, [hiddenPaths]);
-
-  // Persist hiddenNodes to localStorage
-  useEffect(() => {
-    localStorage.setItem(
-      "hiddenNodes",
-      JSON.stringify(Array.from(hiddenNodes)),
-    );
-  }, [hiddenNodes]);
 
   // Persist D3 parameters to localStorage
   useEffect(() => {
@@ -3070,15 +3168,18 @@ function App() {
         <div>
           <div className="flex flex-col">
             <div className="pr-4 flex justify-end gap-1 mb-2">
-              <Tooltip content="Open Directory">
-                <button
-                  onClick={handleDirectoryPicker}
-                  disabled={isLoading}
-                  className="p-2 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 rounded-lg cursor-pointer disabled:opacity-50"
-                >
-                  <FolderOpen size={16} />
-                </button>
-              </Tooltip>
+              <div>
+                <Tooltip content="Open Directory">
+                  <button
+                    ref={folderButtonRef}
+                    onClick={handleToggleDropdown}
+                    disabled={isLoading}
+                    className="p-2 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 rounded-lg cursor-pointer disabled:opacity-50"
+                  >
+                    <FolderOpen size={16} />
+                  </button>
+                </Tooltip>
+              </div>
               <Tooltip content="Refresh">
                 <button
                   onClick={handleRefresh}
@@ -3136,15 +3237,9 @@ function App() {
                     toggleFolder={toggleFolder}
                     hiddenPaths={hiddenPaths}
                     togglePathVisibility={togglePathVisibility}
-                    hiddenNodes={hiddenNodes}
-                    toggleNodeVisibility={toggleNodeVisibility}
                     colorScale={colorScale}
-                    onHoverSymbol={handleHoverSymbol}
                     onHoverFile={handleHoverFile}
                     onHoverFolder={handleHoverFolder}
-                    hoveredSymbolId={hoveredSymbolId}
-                    onSelectSymbol={handleSelectSymbol}
-                    selectedNodeId={selectedNodeId}
                   />
                 </div>
               </>
@@ -3190,6 +3285,82 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* Directory dropdown portal */}
+      {showDirectoryDropdown &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            className="fixed w-64 bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl z-50"
+            style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
+          >
+            <div className="p-2 border-b border-neutral-700">
+              <button
+                onClick={handleDirectoryPicker}
+                disabled={!supportsFileSystemAccess}
+                className="w-full text-left px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-700 rounded flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
+              >
+                <FolderSymlink size={14} />
+                <span>Connect Folder</span>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                {...({ webkitdirectory: true } as any)}
+                multiple
+                onChange={handleFallbackFileSelect}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full text-left px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-700 rounded cursor-pointer flex items-center gap-2"
+              >
+                <FolderOpen size={14} />
+                <span>Open Folder</span>
+              </button>
+            </div>
+            {savedDirectories.length > 0 && (
+              <>
+                <div className="px-3 py-2 text-xs text-neutral-500 font-medium">
+                  Recent directories
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {savedDirectories.map((dir) => (
+                    <div
+                      key={dir.id}
+                      className="px-3 py-2 hover:bg-neutral-700 cursor-pointer flex items-center justify-between group"
+                    >
+                      <button
+                        onClick={() => {
+                          handleLoadSavedDirectory(dir.id);
+                          setShowDirectoryDropdown(false);
+                        }}
+                        className="flex-1 text-left text-sm text-neutral-300 truncate cursor-pointer"
+                      >
+                        {dir.name}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveDirectory(dir.id);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-neutral-600 rounded text-neutral-400 hover:text-neutral-200"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {savedDirectories.length === 0 && (
+              <div className="p-3 text-sm text-neutral-500 text-center">
+                No saved directories
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
 
       {/* Right sidebar */}
       <div
