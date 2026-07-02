@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useMemo, useCallback, memo } from 'react';
-import * as d3 from 'd3';
+import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
+import * as d3 from "d3";
 import {
   Folder,
   File,
@@ -17,9 +17,9 @@ import {
   RefreshCw,
   Settings,
   FolderOpen,
-} from 'lucide-react';
-import './index.css';
-import { buildSymbolGraphFromFiles } from './browserParser';
+} from "lucide-react";
+import "./index.css";
+import { buildSymbolGraphFromFiles } from "./browserParser";
 
 function ViewModeButton({
   mode,
@@ -35,14 +35,20 @@ function ViewModeButton({
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-2 rounded text-sm cursor-pointer ${currentViewMode === mode ? 'bg-neutral-700 text-neutral-50' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}
+      className={`px-3 py-2 rounded text-sm cursor-pointer ${currentViewMode === mode ? "bg-neutral-700 text-neutral-50" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"}`}
     >
       {label}
     </button>
   );
 }
 
-function Tooltip({ children, content }: { children: React.ReactNode; content: string }) {
+function Tooltip({
+  children,
+  content,
+}: {
+  children: React.ReactNode;
+  content: string;
+}) {
   const [isVisible, setIsVisible] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLDivElement>(null);
@@ -74,8 +80,8 @@ function Tooltip({ children, content }: { children: React.ReactNode; content: st
           style={{
             top: position.top,
             left: position.left,
-            transform: 'translateX(-50%)',
-            animation: 'fadeIn 0.15s ease-out',
+            transform: "translateX(-50%)",
+            animation: "fadeIn 0.15s ease-out",
           }}
         >
           {content}
@@ -105,9 +111,9 @@ function TreeNode({
   // Helper to check if a path or any of its parents is hidden
   const isPathOrParentHidden = (itemPath: string): boolean => {
     if (hiddenPaths.has(itemPath)) return true;
-    const parts = itemPath.split('/');
+    const parts = itemPath.split("/");
     for (let i = 0; i < parts.length - 1; i++) {
-      const parentPath = parts.slice(0, i + 1).join('/');
+      const parentPath = parts.slice(0, i + 1).join("/");
       if (hiddenPaths.has(parentPath)) return true;
     }
     return false;
@@ -120,10 +126,12 @@ function TreeNode({
         .map(([name, item]: [string, any]) => {
           const fullPath = path ? `${path}/${name}` : name;
           const isExpanded = expandedFolders.has(fullPath);
-          const isFolder = item.type === 'folder';
-          const isHidden = hiddenPaths.has(fullPath.replace('.ts', ''));
+          const isFolder = item.type === "folder";
+          const isHidden = hiddenPaths.has(fullPath.replace(".ts", ""));
           const isParentHidden = isPathOrParentHidden(fullPath);
-          const folderColor = isFolder ? (colorScale(fullPath) as string) : (colorScale(path || 'root') as string);
+          const folderColor = isFolder
+            ? (colorScale(fullPath) as string)
+            : (colorScale(path || "root") as string);
 
           return (
             <div key={fullPath} className="mb-1">
@@ -149,16 +157,24 @@ function TreeNode({
                   <span className="truncate" style={{ color: folderColor }}>
                     {name}
                   </span>
-                  {isFolder && <span className="text-neutral-500 text-sm">({item.totalSymbols || 0})</span>}
-                  {!isFolder && <span className="text-neutral-500 text-sm">({item.symbols.length})</span>}
+                  {isFolder && (
+                    <span className="text-neutral-500 text-sm">
+                      ({item.totalSymbols || 0})
+                    </span>
+                  )}
+                  {!isFolder && (
+                    <span className="text-neutral-500 text-sm">
+                      ({item.symbols.length})
+                    </span>
+                  )}
                 </div>
-                <Tooltip content={isHidden ? 'Show' : 'Hide'}>
+                <Tooltip content={isHidden ? "Show" : "Hide"}>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       togglePathVisibility(fullPath);
                     }}
-                    className={`${isHidden ? '' : 'hidden group-hover:block'} cursor-pointer text-neutral-300`}
+                    className={`${isHidden ? "" : "hidden group-hover:block"} cursor-pointer text-neutral-300`}
                   >
                     {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
@@ -201,15 +217,26 @@ function TreeNode({
                             ? (el: HTMLDivElement) => {
                                 if (el) {
                                   requestAnimationFrame(() => {
-                                    const scrollContainer = el.closest('.overflow-y-scroll') as HTMLElement;
+                                    const scrollContainer = el.closest(
+                                      ".overflow-y-scroll",
+                                    ) as HTMLElement;
                                     if (scrollContainer) {
-                                      const containerRect = scrollContainer.getBoundingClientRect();
-                                      const elementRect = el.getBoundingClientRect();
-                                      const offsetTop = elementRect.top - containerRect.top + scrollContainer.scrollTop;
-                                      const containerHeight = containerRect.height;
+                                      const containerRect =
+                                        scrollContainer.getBoundingClientRect();
+                                      const elementRect =
+                                        el.getBoundingClientRect();
+                                      const offsetTop =
+                                        elementRect.top -
+                                        containerRect.top +
+                                        scrollContainer.scrollTop;
+                                      const containerHeight =
+                                        containerRect.height;
 
                                       // Center the element in the viewport
-                                      const targetScroll = offsetTop - containerHeight / 2 + elementRect.height / 2;
+                                      const targetScroll =
+                                        offsetTop -
+                                        containerHeight / 2 +
+                                        elementRect.height / 2;
                                       scrollContainer.scrollTop = targetScroll;
                                     }
                                   });
@@ -218,9 +245,16 @@ function TreeNode({
                             : null
                         }
                         className={`text-sm px-2 py-0.5 truncate cursor-pointer rounded flex items-center gap-1 group ${
-                          isSelected ? 'bg-neutral-500' : isHovered ? 'bg-neutral-600' : 'hover:bg-neutral-700'
+                          isSelected
+                            ? "bg-neutral-500"
+                            : isHovered
+                              ? "bg-neutral-600"
+                              : "hover:bg-neutral-700"
                         }`}
-                        style={{ color: folderColor, opacity: isNodeHidden || isParentHidden ? 0.5 : 1 }}
+                        style={{
+                          color: folderColor,
+                          opacity: isNodeHidden || isParentHidden ? 0.5 : 1,
+                        }}
                         onMouseEnter={() => {
                           onHoverSymbol(symbolId);
                         }}
@@ -229,17 +263,25 @@ function TreeNode({
                         }}
                         onClick={() => onSelectSymbol(symbolId)}
                       >
-                        <Box size={16} className="shrink-0" style={{ color: folderColor }} />
+                        <Box
+                          size={16}
+                          className="shrink-0"
+                          style={{ color: folderColor }}
+                        />
                         <span className="truncate flex-1">{symbol}</span>
-                        <Tooltip content={isNodeHidden ? 'Show' : 'Hide'}>
+                        <Tooltip content={isNodeHidden ? "Show" : "Hide"}>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleNodeVisibility(symbolId);
                             }}
-                            className={`${isNodeHidden ? '' : 'hidden group-hover:block'} cursor-pointer text-neutral-300`}
+                            className={`${isNodeHidden ? "" : "hidden group-hover:block"} cursor-pointer text-neutral-300`}
                           >
-                            {isNodeHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                            {isNodeHidden ? (
+                              <EyeOff size={14} />
+                            ) : (
+                              <Eye size={14} />
+                            )}
                           </button>
                         </Tooltip>
                       </div>
@@ -269,21 +311,23 @@ function App() {
   const transformRef = useRef({ x: 0, y: 0, k: 1 });
   const dprRef = useRef(window.devicePixelRatio || 1);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
-    const saved = localStorage.getItem('sidebarOpen');
+    const saved = localStorage.getItem("sidebarOpen");
     return saved !== null ? JSON.parse(saved) : true;
   });
   const [rightSidebarOpen, setRightSidebarOpen] = useState(() => {
-    const saved = localStorage.getItem('rightSidebarOpen');
+    const saved = localStorage.getItem("rightSidebarOpen");
     return saved !== null ? JSON.parse(saved) : false;
   });
   const rightSidebarOpenRef = useRef(false);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set(),
+  );
   const [hiddenPaths, setHiddenPaths] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem('hiddenPaths');
+    const saved = localStorage.getItem("hiddenPaths");
     return saved !== null ? new Set(JSON.parse(saved)) : new Set();
   });
   const [hiddenNodes, setHiddenNodes] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem('hiddenNodes');
+    const saved = localStorage.getItem("hiddenNodes");
     return saved !== null ? new Set(JSON.parse(saved)) : new Set();
   });
   const [hoveredSymbolId, setHoveredSymbolId] = useState<string | null>(null);
@@ -300,43 +344,46 @@ function App() {
   const [forcesEnabled, setForcesEnabled] = useState(false);
   const forcesEnabledRef = useRef(false);
   const [chargeStrength, setChargeStrength] = useState(() => {
-    const saved = localStorage.getItem('chargeStrength');
+    const saved = localStorage.getItem("chargeStrength");
     return saved !== null ? JSON.parse(saved) : -100;
   });
   const [linkDistance, setLinkDistance] = useState(() => {
-    const saved = localStorage.getItem('linkDistance');
+    const saved = localStorage.getItem("linkDistance");
     return saved !== null ? JSON.parse(saved) : 30;
   });
   const [alphaDecayValue, setAlphaDecayValue] = useState(() => {
-    const saved = localStorage.getItem('alphaDecayValue');
+    const saved = localStorage.getItem("alphaDecayValue");
     return saved !== null ? JSON.parse(saved) : 0.0228;
   });
   const [edgeOpacity, setEdgeOpacity] = useState(() => {
-    const saved = localStorage.getItem('edgeOpacity');
+    const saved = localStorage.getItem("edgeOpacity");
     return saved !== null ? JSON.parse(saved) : 0.5;
   });
   const [viewMode, setViewMode] = useState<
-    | 'edges'
-    | 'circles'
-    | 'boxes'
-    | 'para-fillet'
-    | 'para-bezier'
-    | 'para-subdiv'
-    | 'expand-poly'
-    | 'circle-poly'
-    | 'ellipse-wrap'
-    | 'oriented-rect'
-    | 'oriented-rect-rounded'
-    | 'oriented-rect-roundpoly'
-    | 'oriented-rect-roundpoly2'
-  >('oriented-rect-roundpoly');
-  const [customData, setCustomData] = useState<{ nodes: any[]; edges: any[] } | null>(null);
+    | "edges"
+    | "circles"
+    | "boxes"
+    | "para-fillet"
+    | "para-bezier"
+    | "para-subdiv"
+    | "expand-poly"
+    | "circle-poly"
+    | "ellipse-wrap"
+    | "oriented-rect"
+    | "oriented-rect-rounded"
+    | "oriented-rect-roundpoly"
+    | "oriented-rect-roundpoly2"
+  >("oriented-rect-roundpoly");
+  const [customData, setCustomData] = useState<{
+    nodes: any[];
+    edges: any[];
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [directoryHandle, setDirectoryHandle] = useState<any>(null);
 
   const { nodes: generatedNodes, edges: generatedEdges } = useMemo(
     () => (customData ? customData : { nodes: [], edges: [] }),
-    [customData]
+    [customData],
   );
 
   // Filter nodes and edges based on hidden folders, files, and individual nodes
@@ -350,13 +397,13 @@ function App() {
         return false;
       }
 
-      const folder = node.data.folder || 'root';
-      const file = node.data.file || '';
+      const folder = node.data.folder || "root";
+      const file = node.data.file || "";
 
       // Check if this folder or any parent folder is hidden
-      const folderParts = folder.split('/');
+      const folderParts = folder.split("/");
       for (let i = 0; i < folderParts.length; i++) {
-        const parentPath = folderParts.slice(0, i + 1).join('/');
+        const parentPath = folderParts.slice(0, i + 1).join("/");
         if (hiddenSet.has(parentPath)) {
           return false;
         }
@@ -364,7 +411,7 @@ function App() {
 
       // Check if this specific file is hidden
       const filePath = file ? `${folder}/${file}` : folder;
-      const filePathWithoutExt = filePath.replace('.ts', '');
+      const filePathWithoutExt = filePath.replace(".ts", "");
       if (hiddenSet.has(filePathWithoutExt)) {
         return false;
       }
@@ -376,8 +423,10 @@ function App() {
 
     const visibleEdges = generatedEdges.filter((edge: any) => {
       // Handle both string IDs and D3 node objects
-      const sourceId = typeof edge.source === 'string' ? edge.source : edge.source.id;
-      const targetId = typeof edge.target === 'string' ? edge.target : edge.target.id;
+      const sourceId =
+        typeof edge.source === "string" ? edge.source : edge.source.id;
+      const targetId =
+        typeof edge.target === "string" ? edge.target : edge.target.id;
       return visibleNodeIds.has(sourceId) && visibleNodeIds.has(targetId);
     });
 
@@ -396,7 +445,7 @@ function App() {
         drawRef.current();
       }
     },
-    [filteredNodes]
+    [filteredNodes],
   );
 
   const handleHoverFile = useCallback(
@@ -406,7 +455,7 @@ function App() {
         hoveredNodeRef.current = null;
       } else {
         const nodesInFile = filteredNodes.filter((n: any) => {
-          const lastDotIndex = n.id.lastIndexOf('.');
+          const lastDotIndex = n.id.lastIndexOf(".");
           const nodeFilePath = n.id.substring(0, lastDotIndex);
           return nodeFilePath === filePath;
         });
@@ -416,7 +465,7 @@ function App() {
         drawRef.current();
       }
     },
-    [filteredNodes]
+    [filteredNodes],
   );
 
   const handleHoverFolder = useCallback(
@@ -426,31 +475,35 @@ function App() {
         hoveredNodeRef.current = null;
       } else {
         const nodesInFolder = filteredNodes.filter((n: any) => {
-          const lastDotIndex = n.id.lastIndexOf('.');
+          const lastDotIndex = n.id.lastIndexOf(".");
           const nodeFilePath = n.id.substring(0, lastDotIndex);
           // Check if node's file path starts with the folder path
-          return nodeFilePath.startsWith(folderPath + '/') || nodeFilePath === folderPath;
+          return (
+            nodeFilePath.startsWith(folderPath + "/") ||
+            nodeFilePath === folderPath
+          );
         });
-        hoveredNodeRef.current = nodesInFolder.length > 0 ? nodesInFolder : null;
+        hoveredNodeRef.current =
+          nodesInFolder.length > 0 ? nodesInFolder : null;
       }
       if (drawRef.current) {
         drawRef.current();
       }
     },
-    [filteredNodes]
+    [filteredNodes],
   );
 
   const handleSelectSymbol = useCallback((nodeId: string) => {
     setSelectedNodeId(nodeId);
 
     // Expand the folder path for the selected node
-    const lastDotIndex = nodeId.lastIndexOf('.');
+    const lastDotIndex = nodeId.lastIndexOf(".");
     if (lastDotIndex !== -1) {
       const filePath = nodeId.substring(0, lastDotIndex);
-      const pathParts = filePath.split('/');
+      const pathParts = filePath.split("/");
       const pathsToExpand: string[] = [];
 
-      let currentPath = '';
+      let currentPath = "";
       for (const part of pathParts) {
         currentPath = currentPath ? `${currentPath}/${part}` : part;
         pathsToExpand.push(currentPath);
@@ -476,7 +529,7 @@ function App() {
   const { folderMap, colorScale } = useMemo(() => {
     const map = new Map<string, string>();
     generatedNodes.forEach((node: any) => {
-      const folder = node.data.folder || 'root';
+      const folder = node.data.folder || "root";
       map.set(node.id, folder);
     });
 
@@ -491,19 +544,19 @@ function App() {
     const tree: Record<string, any> = {};
 
     generatedNodes.forEach((node: any) => {
-      const lastDotIndex = node.id.lastIndexOf('.');
+      const lastDotIndex = node.id.lastIndexOf(".");
       if (lastDotIndex === -1) return;
       const filePath = node.id.substring(0, lastDotIndex);
       const symbolName = node.id.substring(lastDotIndex + 1);
 
       // Split path into parts
-      const parts = filePath.split('/');
+      const parts = filePath.split("/");
       let current = tree;
 
       parts.forEach((part: string, index: number) => {
         if (!current[part]) {
           current[part] = {
-            type: index === parts.length - 1 ? 'file' : 'folder',
+            type: index === parts.length - 1 ? "file" : "folder",
             children: {},
             symbols: [],
           };
@@ -520,7 +573,7 @@ function App() {
 
     // Calculate total symbols for each folder recursively
     function calculateTotalSymbols(node: any): number {
-      if (node.type === 'file') {
+      if (node.type === "file") {
         return node.symbols.length;
       }
       let total = 0;
@@ -554,7 +607,7 @@ function App() {
     setHiddenPaths((prev: Set<string>) => {
       const next = new Set(prev);
       // Remove .ts extension for consistency with tree paths
-      const normalizedPath = path.replace('.ts', '');
+      const normalizedPath = path.replace(".ts", "");
       if (next.has(normalizedPath)) {
         next.delete(normalizedPath);
       } else {
@@ -589,29 +642,31 @@ function App() {
     const pathsToHide = new Set<string>();
     const nodesToHide = new Set<string>();
 
-    function collectVisibleItems(node: any, currentPath: string = '') {
+    function collectVisibleItems(node: any, currentPath: string = "") {
       Object.entries(node).forEach(([name, item]: [string, any]) => {
         const fullPath = currentPath ? `${currentPath}/${name}` : name;
 
-        if (item.type === 'folder') {
+        if (item.type === "folder") {
           if (expandedFolders.has(fullPath)) {
             // Folder is expanded, hide its direct children
-            Object.entries(item.children).forEach(([childName, childItem]: [string, any]) => {
-              const childPath = `${fullPath}/${childName}`;
-              if (childItem.type === 'folder') {
-                pathsToHide.add(childPath);
-              } else if (childItem.type === 'file') {
-                pathsToHide.add(childPath);
-                childItem.symbols.forEach((symbol: string) => {
-                  nodesToHide.add(`${childPath}.${symbol}`);
-                });
-              }
-            });
+            Object.entries(item.children).forEach(
+              ([childName, childItem]: [string, any]) => {
+                const childPath = `${fullPath}/${childName}`;
+                if (childItem.type === "folder") {
+                  pathsToHide.add(childPath);
+                } else if (childItem.type === "file") {
+                  pathsToHide.add(childPath);
+                  childItem.symbols.forEach((symbol: string) => {
+                    nodesToHide.add(`${childPath}.${symbol}`);
+                  });
+                }
+              },
+            );
           } else {
             // Folder is collapsed, hide the folder itself
             pathsToHide.add(fullPath);
           }
-        } else if (item.type === 'file') {
+        } else if (item.type === "file") {
           // Files are only visible if their parent folder is expanded
           // If we reach a file, its parent must be expanded, so hide it
           pathsToHide.add(fullPath);
@@ -682,13 +737,13 @@ function App() {
 
   const expandAll = useCallback(() => {
     const allPaths = new Set<string>();
-    function collectPaths(node: any, currentPath: string = '') {
+    function collectPaths(node: any, currentPath: string = "") {
       Object.entries(node).forEach(([name, item]: [string, any]) => {
         const fullPath = currentPath ? `${currentPath}/${name}` : name;
-        if (item.type === 'folder') {
+        if (item.type === "folder") {
           allPaths.add(fullPath);
           collectPaths(item.children, fullPath);
-        } else if (item.type === 'file') {
+        } else if (item.type === "file") {
           allPaths.add(fullPath);
         }
       });
@@ -704,9 +759,9 @@ function App() {
       setDirectoryHandle(dirHandle);
       await loadDirectoryData(dirHandle);
     } catch (err) {
-      console.error('Directory picker error:', err);
-      if ((err as Error).name !== 'AbortError') {
-        alert('Error picking directory: ' + (err as Error).message);
+      console.error("Directory picker error:", err);
+      if ((err as Error).name !== "AbortError") {
+        alert("Error picking directory: " + (err as Error).message);
       }
     } finally {
       setIsLoading(false);
@@ -718,14 +773,20 @@ function App() {
       setIsLoading(true);
       const files: { path: string; content: string }[] = [];
 
-      async function* getFiles(dirHandle: any, path: string = ''): AsyncGenerator<{ path: string; content: string }> {
+      async function* getFiles(
+        dirHandle: any,
+        path: string = "",
+      ): AsyncGenerator<{ path: string; content: string }> {
         for await (const entry of dirHandle.values()) {
           const entryPath = path ? `${path}/${entry.name}` : entry.name;
-          if (entry.kind === 'file' && (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx'))) {
+          if (
+            entry.kind === "file" &&
+            (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))
+          ) {
             const file = await entry.getFile();
             const content = await file.text();
             yield { path: entryPath, content };
-          } else if (entry.kind === 'directory') {
+          } else if (entry.kind === "directory") {
             yield* getFiles(entry, entryPath);
           }
         }
@@ -739,14 +800,16 @@ function App() {
 
       // Parse the files to build the symbol graph
       const symbolData = buildSymbolGraphFromFiles(files);
-      console.log(`Parsed ${symbolData.nodes.length} symbols and ${symbolData.edges.length} edges`);
+      console.log(
+        `Parsed ${symbolData.nodes.length} symbols and ${symbolData.edges.length} edges`,
+      );
 
       // Convert to the format expected by the graph
       const parsedData = {
         nodes: symbolData.nodes.map((node) => ({
           id: node.id,
           position: { x: 0, y: 0 },
-          type: 'endpoint',
+          type: "endpoint",
           data: {
             label: node.name,
             file: node.file,
@@ -766,8 +829,8 @@ function App() {
 
       setCustomData(parsedData);
     } catch (err) {
-      console.error('Error loading directory data:', err);
-      alert('Error loading directory data: ' + (err as Error).message);
+      console.error("Error loading directory data:", err);
+      alert("Error loading directory data: " + (err as Error).message);
     } finally {
       setIsLoading(false);
     }
@@ -775,7 +838,7 @@ function App() {
 
   const handleRefresh = useCallback(async () => {
     if (!directoryHandle) {
-      alert('No directory selected. Please select a directory first.');
+      alert("No directory selected. Please select a directory first.");
       return;
     }
     // Save current visibility states
@@ -789,19 +852,28 @@ function App() {
     setHiddenPaths(savedHiddenPaths);
     setHiddenNodes(savedHiddenNodes);
     setExpandedFolders(savedExpandedFolders);
-  }, [directoryHandle, loadDirectoryData, hiddenPaths, hiddenNodes, expandedFolders]);
+  }, [
+    directoryHandle,
+    loadDirectoryData,
+    hiddenPaths,
+    hiddenNodes,
+    expandedFolders,
+  ]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    const context = canvas.getContext('2d');
+    const context = canvas.getContext("2d");
     if (!context) return;
 
     const dpr = window.devicePixelRatio || 1;
     dprRef.current = dpr;
     const widthRef = {
-      current: window.innerWidth - (sidebarOpenRef.current ? 300 : 0) - (rightSidebarOpenRef.current ? 300 : 0),
+      current:
+        window.innerWidth -
+        (sidebarOpenRef.current ? 300 : 0) -
+        (rightSidebarOpenRef.current ? 300 : 0),
     };
     const heightRef = { current: window.innerHeight };
     let width = widthRef.current;
@@ -821,7 +893,10 @@ function App() {
         dprRef.current = newDpr;
       }
 
-      width = window.innerWidth - (sidebarOpenRef.current ? 300 : 0) - (rightSidebarOpenRef.current ? 300 : 0);
+      width =
+        window.innerWidth -
+        (sidebarOpenRef.current ? 300 : 0) -
+        (rightSidebarOpenRef.current ? 300 : 0);
       height = window.innerHeight;
       widthRef.current = width;
       heightRef.current = height;
@@ -839,7 +914,10 @@ function App() {
 
     const handleSidebarResize = () => {
       const newDpr = dprRef.current;
-      const newWidth = window.innerWidth - (sidebarOpenRef.current ? 300 : 0) - (rightSidebarOpenRef.current ? 300 : 0);
+      const newWidth =
+        window.innerWidth -
+        (sidebarOpenRef.current ? 300 : 0) -
+        (rightSidebarOpenRef.current ? 300 : 0);
       widthRef.current = newWidth;
       canvas.width = newWidth * newDpr;
       canvas.style.width = `${newWidth}px`;
@@ -853,7 +931,7 @@ function App() {
 
     resizeRef.current = handleSidebarResize;
 
-    window.addEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
 
     // Initialize transform if not set
     if (transformRef.current.x === 0 && transformRef.current.y === 0) {
@@ -875,32 +953,36 @@ function App() {
       const newK = transformRef.current.k * zoomFactor;
 
       // Zoom towards mouse position
-      transformRef.current.x = mouseX - (mouseX - transformRef.current.x) * (newK / transformRef.current.k);
-      transformRef.current.y = mouseY - (mouseY - transformRef.current.y) * (newK / transformRef.current.k);
+      transformRef.current.x =
+        mouseX -
+        (mouseX - transformRef.current.x) * (newK / transformRef.current.k);
+      transformRef.current.y =
+        mouseY -
+        (mouseY - transformRef.current.y) * (newK / transformRef.current.k);
       transformRef.current.k = newK;
 
       draw();
     };
 
-    canvas.addEventListener('wheel', handleWheel);
+    canvas.addEventListener("wheel", handleWheel);
 
     const simulation = d3
       .forceSimulation(filteredNodes as any)
       .force(
-        'link',
+        "link",
         d3
           .forceLink(filteredEdges as any)
           .id((d: any) => d.id)
-          .distance(linkDistance)
+          .distance(linkDistance),
       )
-      .force('charge', d3.forceManyBody().strength(chargeStrength))
-      .force('x', d3.forceX(0))
-      .force('y', d3.forceY(0))
+      .force("charge", d3.forceManyBody().strength(chargeStrength))
+      .force("x", d3.forceX(0))
+      .force("y", d3.forceY(0))
       .alphaDecay(forcesEnabled ? 0 : alphaDecayValue);
 
     simulationRef.current = simulation;
 
-    simulation.on('tick', () => {
+    simulation.on("tick", () => {
       draw();
     });
 
@@ -924,23 +1006,23 @@ function App() {
       const groupHulls = new Map<string, [number, number][]>();
 
       if (
-        viewMode === 'circles' ||
-        viewMode === 'boxes' ||
-        viewMode === 'para-fillet' ||
-        viewMode === 'para-bezier' ||
-        viewMode === 'para-subdiv' ||
-        viewMode === 'expand-poly' ||
-        viewMode === 'circle-poly' ||
-        viewMode === 'ellipse-wrap' ||
-        viewMode === 'oriented-rect' ||
-        viewMode === 'oriented-rect-rounded' ||
-        viewMode === 'oriented-rect-roundpoly' ||
-        viewMode === 'oriented-rect-roundpoly2'
+        viewMode === "circles" ||
+        viewMode === "boxes" ||
+        viewMode === "para-fillet" ||
+        viewMode === "para-bezier" ||
+        viewMode === "para-subdiv" ||
+        viewMode === "expand-poly" ||
+        viewMode === "circle-poly" ||
+        viewMode === "ellipse-wrap" ||
+        viewMode === "oriented-rect" ||
+        viewMode === "oriented-rect-rounded" ||
+        viewMode === "oriented-rect-roundpoly" ||
+        viewMode === "oriented-rect-roundpoly2"
       ) {
         const nodesByFile = new Map<string, any[]>();
         filteredNodes.forEach((node: any) => {
           const file = node.data.file;
-          const folder = node.data.folder || '';
+          const folder = node.data.folder || "";
           const uniqueKey = folder ? `${folder}/${file}` : file;
           if (!nodesByFile.has(uniqueKey)) {
             nodesByFile.set(uniqueKey, []);
@@ -950,7 +1032,7 @@ function App() {
 
         nodesByFile.forEach((nodes, uniqueKey) => {
           // Get folder color for this group
-          const folder = nodes[0].data.folder || 'root';
+          const folder = nodes[0].data.folder || "root";
           const folderColor = colorScale(folder) as string;
 
           // Convert hex to rgba with 0.15 opacity
@@ -963,7 +1045,7 @@ function App() {
           const fillColor = hexToRgba(folderColor, 0.15);
           const strokeColor = hexToRgba(folderColor, 0.3);
 
-          if (viewMode === 'para-fillet') {
+          if (viewMode === "para-fillet") {
             // Parallel offset with fillet (45-degree chamfer)
             if (nodes.length < 3) return;
 
@@ -987,29 +1069,44 @@ function App() {
                 const edge1 = [next[0] - current[0], next[1] - current[1]];
                 const edge2 = [current[0] - prev[0], current[1] - prev[1]];
 
-                const len1 = Math.sqrt(edge1[0] * edge1[0] + edge1[1] * edge1[1]);
-                const len2 = Math.sqrt(edge2[0] * edge2[0] + edge2[1] * edge2[1]);
+                const len1 = Math.sqrt(
+                  edge1[0] * edge1[0] + edge1[1] * edge1[1],
+                );
+                const len2 = Math.sqrt(
+                  edge2[0] * edge2[0] + edge2[1] * edge2[1],
+                );
                 const norm1 = [edge1[0] / len1, edge1[1] / len1];
                 const norm2 = [edge2[0] / len2, edge2[1] / len2];
 
                 const perp1 = [-norm1[1], norm1[0]];
                 const perp2 = [-norm2[1], norm2[0]];
 
-                const avgPerp = [(perp1[0] + perp2[0]) / 2, (perp1[1] + perp2[1]) / 2];
-                const avgLen = Math.sqrt(avgPerp[0] * avgPerp[0] + avgPerp[1] * avgPerp[1]);
-                const normalizedAvg = [avgPerp[0] / avgLen, avgPerp[1] / avgLen];
+                const avgPerp = [
+                  (perp1[0] + perp2[0]) / 2,
+                  (perp1[1] + perp2[1]) / 2,
+                ];
+                const avgLen = Math.sqrt(
+                  avgPerp[0] * avgPerp[0] + avgPerp[1] * avgPerp[1],
+                );
+                const normalizedAvg = [
+                  avgPerp[0] / avgLen,
+                  avgPerp[1] / avgLen,
+                ];
 
-                offsetPoints.push([current[0] + normalizedAvg[0] * offset, current[1] + normalizedAvg[1] * offset] as [
-                  number,
-                  number,
-                ]);
+                offsetPoints.push([
+                  current[0] + normalizedAvg[0] * offset,
+                  current[1] + normalizedAvg[1] * offset,
+                ] as [number, number]);
               }
 
               context.beginPath();
 
               for (let i = 0; i < offsetPoints.length; i++) {
                 const current = offsetPoints[i];
-                const prev = offsetPoints[(i - 1 + offsetPoints.length) % offsetPoints.length];
+                const prev =
+                  offsetPoints[
+                    (i - 1 + offsetPoints.length) % offsetPoints.length
+                  ];
                 const next = offsetPoints[(i + 1) % offsetPoints.length];
 
                 const v1 = [prev[0] - current[0], prev[1] - current[1]];
@@ -1020,9 +1117,18 @@ function App() {
                 const n1 = [v1[0] / len1, v1[1] / len1];
                 const n2 = [v2[0] / len2, v2[1] / len2];
 
-                const chamferDist = Math.min(chamferSize, Math.min(len1, len2) / 2);
-                const chamferStart = [current[0] + n1[0] * chamferDist, current[1] + n1[1] * chamferDist];
-                const chamferEnd = [current[0] + n2[0] * chamferDist, current[1] + n2[1] * chamferDist];
+                const chamferDist = Math.min(
+                  chamferSize,
+                  Math.min(len1, len2) / 2,
+                );
+                const chamferStart = [
+                  current[0] + n1[0] * chamferDist,
+                  current[1] + n1[1] * chamferDist,
+                ];
+                const chamferEnd = [
+                  current[0] + n2[0] * chamferDist,
+                  current[1] + n2[1] * chamferDist,
+                ];
 
                 if (i === 0) {
                   context.moveTo(chamferStart[0], chamferStart[1]);
@@ -1039,7 +1145,7 @@ function App() {
               context.lineWidth = 1;
               context.stroke();
             }
-          } else if (viewMode === 'para-bezier') {
+          } else if (viewMode === "para-bezier") {
             // Parallel offset with Bezier curve smoothing
             if (nodes.length < 3) return;
 
@@ -1063,29 +1169,44 @@ function App() {
                 const edge1 = [next[0] - current[0], next[1] - current[1]];
                 const edge2 = [current[0] - prev[0], current[1] - prev[1]];
 
-                const len1 = Math.sqrt(edge1[0] * edge1[0] + edge1[1] * edge1[1]);
-                const len2 = Math.sqrt(edge2[0] * edge2[0] + edge2[1] * edge2[1]);
+                const len1 = Math.sqrt(
+                  edge1[0] * edge1[0] + edge1[1] * edge1[1],
+                );
+                const len2 = Math.sqrt(
+                  edge2[0] * edge2[0] + edge2[1] * edge2[1],
+                );
                 const norm1 = [edge1[0] / len1, edge1[1] / len1];
                 const norm2 = [edge2[0] / len2, edge2[1] / len2];
 
                 const perp1 = [-norm1[1], norm1[0]];
                 const perp2 = [-norm2[1], norm2[0]];
 
-                const avgPerp = [(perp1[0] + perp2[0]) / 2, (perp1[1] + perp2[1]) / 2];
-                const avgLen = Math.sqrt(avgPerp[0] * avgPerp[0] + avgPerp[1] * avgPerp[1]);
-                const normalizedAvg = [avgPerp[0] / avgLen, avgPerp[1] / avgLen];
+                const avgPerp = [
+                  (perp1[0] + perp2[0]) / 2,
+                  (perp1[1] + perp2[1]) / 2,
+                ];
+                const avgLen = Math.sqrt(
+                  avgPerp[0] * avgPerp[0] + avgPerp[1] * avgPerp[1],
+                );
+                const normalizedAvg = [
+                  avgPerp[0] / avgLen,
+                  avgPerp[1] / avgLen,
+                ];
 
-                offsetPoints.push([current[0] + normalizedAvg[0] * offset, current[1] + normalizedAvg[1] * offset] as [
-                  number,
-                  number,
-                ]);
+                offsetPoints.push([
+                  current[0] + normalizedAvg[0] * offset,
+                  current[1] + normalizedAvg[1] * offset,
+                ] as [number, number]);
               }
 
               context.beginPath();
 
               for (let i = 0; i < offsetPoints.length; i++) {
                 const current = offsetPoints[i];
-                const prev = offsetPoints[(i - 1 + offsetPoints.length) % offsetPoints.length];
+                const prev =
+                  offsetPoints[
+                    (i - 1 + offsetPoints.length) % offsetPoints.length
+                  ];
                 const next = offsetPoints[(i + 1) % offsetPoints.length];
 
                 if (i === 0) {
@@ -1095,7 +1216,14 @@ function App() {
                   const cp1y = prev[1] + (current[1] - prev[1]) * smoothness;
                   const cp2x = current[0] - (next[0] - current[0]) * smoothness;
                   const cp2y = current[1] - (next[1] - current[1]) * smoothness;
-                  context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, current[0], current[1]);
+                  context.bezierCurveTo(
+                    cp1x,
+                    cp1y,
+                    cp2x,
+                    cp2y,
+                    current[0],
+                    current[1],
+                  );
                 }
               }
 
@@ -1115,7 +1243,7 @@ function App() {
               context.lineWidth = 1;
               context.stroke();
             }
-          } else if (viewMode === 'para-subdiv') {
+          } else if (viewMode === "para-subdiv") {
             // Parallel offset with subdivision smoothing (Chaikin's algorithm)
             if (nodes.length < 3) return;
 
@@ -1139,22 +1267,34 @@ function App() {
                 const edge1 = [next[0] - current[0], next[1] - current[1]];
                 const edge2 = [current[0] - prev[0], current[1] - prev[1]];
 
-                const len1 = Math.sqrt(edge1[0] * edge1[0] + edge1[1] * edge1[1]);
-                const len2 = Math.sqrt(edge2[0] * edge2[0] + edge2[1] * edge2[1]);
+                const len1 = Math.sqrt(
+                  edge1[0] * edge1[0] + edge1[1] * edge1[1],
+                );
+                const len2 = Math.sqrt(
+                  edge2[0] * edge2[0] + edge2[1] * edge2[1],
+                );
                 const norm1 = [edge1[0] / len1, edge1[1] / len1];
                 const norm2 = [edge2[0] / len2, edge2[1] / len2];
 
                 const perp1 = [-norm1[1], norm1[0]];
                 const perp2 = [-norm2[1], norm2[0]];
 
-                const avgPerp = [(perp1[0] + perp2[0]) / 2, (perp1[1] + perp2[1]) / 2];
-                const avgLen = Math.sqrt(avgPerp[0] * avgPerp[0] + avgPerp[1] * avgPerp[1]);
-                const normalizedAvg = [avgPerp[0] / avgLen, avgPerp[1] / avgLen];
+                const avgPerp = [
+                  (perp1[0] + perp2[0]) / 2,
+                  (perp1[1] + perp2[1]) / 2,
+                ];
+                const avgLen = Math.sqrt(
+                  avgPerp[0] * avgPerp[0] + avgPerp[1] * avgPerp[1],
+                );
+                const normalizedAvg = [
+                  avgPerp[0] / avgLen,
+                  avgPerp[1] / avgLen,
+                ];
 
-                offsetPoints.push([current[0] + normalizedAvg[0] * offset, current[1] + normalizedAvg[1] * offset] as [
-                  number,
-                  number,
-                ]);
+                offsetPoints.push([
+                  current[0] + normalizedAvg[0] * offset,
+                  current[1] + normalizedAvg[1] * offset,
+                ] as [number, number]);
               }
 
               // Chaikin's subdivision
@@ -1164,14 +1304,14 @@ function App() {
                 for (let i = 0; i < smoothed.length; i++) {
                   const current = smoothed[i];
                   const next = smoothed[(i + 1) % smoothed.length];
-                  const q = [0.75 * current[0] + 0.25 * next[0], 0.75 * current[1] + 0.25 * next[1]] as [
-                    number,
-                    number,
-                  ];
-                  const r = [0.25 * current[0] + 0.75 * next[0], 0.25 * current[1] + 0.75 * next[1]] as [
-                    number,
-                    number,
-                  ];
+                  const q = [
+                    0.75 * current[0] + 0.25 * next[0],
+                    0.75 * current[1] + 0.25 * next[1],
+                  ] as [number, number];
+                  const r = [
+                    0.25 * current[0] + 0.75 * next[0],
+                    0.25 * current[1] + 0.75 * next[1],
+                  ] as [number, number];
                   newPoints.push(q, r);
                 }
                 smoothed = newPoints;
@@ -1189,7 +1329,7 @@ function App() {
               context.lineWidth = 1;
               context.stroke();
             }
-          } else if (viewMode === 'expand-poly') {
+          } else if (viewMode === "expand-poly") {
             // Expand point to regular polygon
             const nodeRadius = 10;
             const padding = 5;
@@ -1204,7 +1344,10 @@ function App() {
               const centerY = nodes[0].y;
               for (let i = 0; i < sides; i++) {
                 const angle = (i / sides) * 2 * Math.PI;
-                basePoints.push([centerX + Math.cos(angle) * radius, centerY + Math.sin(angle) * radius]);
+                basePoints.push([
+                  centerX + Math.cos(angle) * radius,
+                  centerY + Math.sin(angle) * radius,
+                ]);
               }
             } else if (nodes.length === 2) {
               // Two nodes: create capsule polygon
@@ -1221,7 +1364,10 @@ function App() {
                 const y = radius * Math.sin(theta);
                 const rotatedX = x * Math.cos(angle) - y * Math.sin(angle);
                 const rotatedY = x * Math.sin(angle) + y * Math.cos(angle);
-                basePoints.push([p1.x + dx / 2 + rotatedX, p1.y + dy / 2 + rotatedY]);
+                basePoints.push([
+                  p1.x + dx / 2 + rotatedX,
+                  p1.y + dy / 2 + rotatedY,
+                ]);
               }
             } else {
               // 3+ nodes: use convex hull
@@ -1246,7 +1392,7 @@ function App() {
               context.lineWidth = 1;
               context.stroke();
             }
-          } else if (viewMode === 'circle-poly') {
+          } else if (viewMode === "circle-poly") {
             // Circle as polygon
             const nodeRadius = 10;
             const padding = 5;
@@ -1260,7 +1406,10 @@ function App() {
               const centerY = nodes[0].y;
               for (let i = 0; i < segments; i++) {
                 const angle = (i / segments) * 2 * Math.PI;
-                basePoints.push([centerX + Math.cos(angle) * circleRadius, centerY + Math.sin(angle) * circleRadius]);
+                basePoints.push([
+                  centerX + Math.cos(angle) * circleRadius,
+                  centerY + Math.sin(angle) * circleRadius,
+                ]);
               }
             } else if (nodes.length === 2) {
               const p1 = nodes[0];
@@ -1276,7 +1425,10 @@ function App() {
                 const y = circleRadius * Math.sin(theta);
                 const rotatedX = x * Math.cos(angle) - y * Math.sin(angle);
                 const rotatedY = x * Math.sin(angle) + y * Math.cos(angle);
-                basePoints.push([p1.x + dx / 2 + rotatedX, p1.y + dy / 2 + rotatedY]);
+                basePoints.push([
+                  p1.x + dx / 2 + rotatedX,
+                  p1.y + dy / 2 + rotatedY,
+                ]);
               }
             } else {
               const points: [number, number][] = nodes.map((n) => [n.x, n.y]);
@@ -1300,7 +1452,7 @@ function App() {
               context.lineWidth = 1;
               context.stroke();
             }
-          } else if (viewMode === 'ellipse-wrap') {
+          } else if (viewMode === "ellipse-wrap") {
             // Minimum bounding ellipse
             const nodeRadius = 10;
             const padding = 5;
@@ -1331,8 +1483,10 @@ function App() {
               const points: [number, number][] = nodes.map((n) => [n.x, n.y]);
 
               // Compute centroid
-              const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
-              const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
+              const cx =
+                points.reduce((sum, p) => sum + p[0], 0) / points.length;
+              const cy =
+                points.reduce((sum, p) => sum + p[1], 0) / points.length;
 
               // Compute covariance matrix
               let covXX = 0,
@@ -1412,7 +1566,7 @@ function App() {
             context.strokeStyle = strokeColor;
             context.lineWidth = 1;
             context.stroke();
-          } else if (viewMode === 'oriented-rect') {
+          } else if (viewMode === "oriented-rect") {
             // PCA-based oriented bounding rectangle with rounded corners
             const nodeRadius = 10;
             const padding = 5;
@@ -1443,8 +1597,10 @@ function App() {
               const points: [number, number][] = nodes.map((n) => [n.x, n.y]);
 
               // Compute centroid
-              const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
-              const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
+              const cx =
+                points.reduce((sum, p) => sum + p[0], 0) / points.length;
+              const cy =
+                points.reduce((sum, p) => sum + p[1], 0) / points.length;
 
               // Compute covariance matrix
               let covXX = 0,
@@ -1509,7 +1665,13 @@ function App() {
             context.rotate(angle);
 
             context.beginPath();
-            context.roundRect(-width / 2, -height / 2, width, height, cornerRadius);
+            context.roundRect(
+              -width / 2,
+              -height / 2,
+              width,
+              height,
+              cornerRadius,
+            );
             context.fillStyle = fillColor;
             context.fill();
             context.strokeStyle = strokeColor;
@@ -1527,10 +1689,13 @@ function App() {
             ].map(([x, y]) => {
               const rotatedX = x * Math.cos(angle) - y * Math.sin(angle);
               const rotatedY = x * Math.sin(angle) + y * Math.cos(angle);
-              return [centerX + rotatedX, centerY + rotatedY] as [number, number];
+              return [centerX + rotatedX, centerY + rotatedY] as [
+                number,
+                number,
+              ];
             });
             groupHulls.set(uniqueKey, rectHull);
-          } else if (viewMode === 'oriented-rect-rounded') {
+          } else if (viewMode === "oriented-rect-rounded") {
             // PCA-based oriented bounding rectangle with adaptive rounding
             const nodeRadius = 10;
             const padding = 5;
@@ -1570,8 +1735,10 @@ function App() {
               const points: [number, number][] = nodes.map((n) => [n.x, n.y]);
 
               // Compute centroid
-              const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
-              const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
+              const cx =
+                points.reduce((sum, p) => sum + p[0], 0) / points.length;
+              const cy =
+                points.reduce((sum, p) => sum + p[1], 0) / points.length;
 
               // Compute covariance matrix
               let covXX = 0,
@@ -1637,7 +1804,13 @@ function App() {
             context.rotate(angle);
 
             context.beginPath();
-            context.roundRect(-width / 2, -height / 2, width, height, adaptiveCornerRadius);
+            context.roundRect(
+              -width / 2,
+              -height / 2,
+              width,
+              height,
+              adaptiveCornerRadius,
+            );
             context.fillStyle = fillColor;
             context.fill();
             context.strokeStyle = strokeColor;
@@ -1655,10 +1828,13 @@ function App() {
             ].map(([x, y]) => {
               const rotatedX = x * Math.cos(angle) - y * Math.sin(angle);
               const rotatedY = x * Math.sin(angle) + y * Math.cos(angle);
-              return [centerX + rotatedX, centerY + rotatedY] as [number, number];
+              return [centerX + rotatedX, centerY + rotatedY] as [
+                number,
+                number,
+              ];
             });
             groupHulls.set(uniqueKey, rectHull2);
-          } else if (viewMode === 'oriented-rect-roundpoly') {
+          } else if (viewMode === "oriented-rect-roundpoly") {
             // Adaptive rounding with Para+ polygons for 3+ nodes
             const nodeRadius = 10;
             const padding = 5;
@@ -1697,7 +1873,13 @@ function App() {
               context.rotate(angle);
 
               context.beginPath();
-              context.roundRect(-width / 2, -height / 2, width, height, adaptiveCornerRadius);
+              context.roundRect(
+                -width / 2,
+                -height / 2,
+                width,
+                height,
+                adaptiveCornerRadius,
+              );
               context.fillStyle = fillColor;
               context.fill();
               context.strokeStyle = strokeColor;
@@ -1723,7 +1905,9 @@ function App() {
                 };
 
                 // Helper to get perpendicular (rotated 90 degrees counter-clockwise)
-                const perpendicular = (v: [number, number]): [number, number] => {
+                const perpendicular = (
+                  v: [number, number],
+                ): [number, number] => {
                   return [-v[1], v[0]];
                 };
 
@@ -1736,8 +1920,14 @@ function App() {
                   const next = hull[(i + 1) % hull.length];
 
                   // Edge vectors (pointing away from current)
-                  const edge1 = [prev[0] - current[0], prev[1] - current[1]] as [number, number];
-                  const edge2 = [next[0] - current[0], next[1] - current[1]] as [number, number];
+                  const edge1 = [
+                    prev[0] - current[0],
+                    prev[1] - current[1],
+                  ] as [number, number];
+                  const edge2 = [
+                    next[0] - current[0],
+                    next[1] - current[1],
+                  ] as [number, number];
 
                   // Normalize edge vectors
                   const norm1 = normalize(edge1);
@@ -1752,7 +1942,10 @@ function App() {
                     hull.reduce((sum, p) => sum + p[0], 0) / hull.length,
                     hull.reduce((sum, p) => sum + p[1], 0) / hull.length,
                   ];
-                  const toCenter: [number, number] = [centroid[0] - current[0], centroid[1] - current[1]];
+                  const toCenter: [number, number] = [
+                    centroid[0] - current[0],
+                    centroid[1] - current[1],
+                  ];
 
                   if (perp1[0] * toCenter[0] + perp1[1] * toCenter[1] > 0) {
                     perp1[0] = -perp1[0];
@@ -1764,11 +1957,14 @@ function App() {
                   }
 
                   // Compute offset edge lines
-                  const offsetEdge1_p1 = [prev[0] + perp1[0] * offset, prev[1] + perp1[1] * offset] as [number, number];
-                  const offsetEdge1_p2 = [current[0] + perp1[0] * offset, current[1] + perp1[1] * offset] as [
-                    number,
-                    number,
-                  ];
+                  const offsetEdge1_p1 = [
+                    prev[0] + perp1[0] * offset,
+                    prev[1] + perp1[1] * offset,
+                  ] as [number, number];
+                  const offsetEdge1_p2 = [
+                    current[0] + perp1[0] * offset,
+                    current[1] + perp1[1] * offset,
+                  ] as [number, number];
 
                   if (i === 0) {
                     // Start at the first offset edge point
@@ -1796,7 +1992,14 @@ function App() {
                     if (endAngle > startAngle) endAngle -= 2 * Math.PI;
                   }
 
-                  context.arc(current[0], current[1], radius, startAngle, endAngle, cross < 0);
+                  context.arc(
+                    current[0],
+                    current[1],
+                    radius,
+                    startAngle,
+                    endAngle,
+                    cross < 0,
+                  );
                 }
 
                 context.closePath();
@@ -1807,7 +2010,7 @@ function App() {
                 context.stroke();
               }
             }
-          } else if (viewMode === 'oriented-rect-roundpoly2') {
+          } else if (viewMode === "oriented-rect-roundpoly2") {
             // Adaptive rounding with Para+ polygons for 3+ nodes (Polygon2 - copy of Polygon)
             const nodeRadius = 10;
             const padding = 5;
@@ -1846,7 +2049,13 @@ function App() {
               context.rotate(angle);
 
               context.beginPath();
-              context.roundRect(-width / 2, -height / 2, width, height, adaptiveCornerRadius);
+              context.roundRect(
+                -width / 2,
+                -height / 2,
+                width,
+                height,
+                adaptiveCornerRadius,
+              );
               context.fillStyle = fillColor;
               context.fill();
               context.strokeStyle = strokeColor;
@@ -1872,7 +2081,9 @@ function App() {
                 };
 
                 // Helper to get perpendicular (rotated 90 degrees counter-clockwise)
-                const perpendicular = (v: [number, number]): [number, number] => {
+                const perpendicular = (
+                  v: [number, number],
+                ): [number, number] => {
                   return [-v[1], v[0]];
                 };
 
@@ -1885,8 +2096,14 @@ function App() {
                   const next = hull[(i + 1) % hull.length];
 
                   // Edge vectors (pointing away from current)
-                  const edge1 = [prev[0] - current[0], prev[1] - current[1]] as [number, number];
-                  const edge2 = [next[0] - current[0], next[1] - current[1]] as [number, number];
+                  const edge1 = [
+                    prev[0] - current[0],
+                    prev[1] - current[1],
+                  ] as [number, number];
+                  const edge2 = [
+                    next[0] - current[0],
+                    next[1] - current[1],
+                  ] as [number, number];
 
                   // Normalize edge vectors
                   const norm1 = normalize(edge1);
@@ -1901,7 +2118,10 @@ function App() {
                     hull.reduce((sum, p) => sum + p[0], 0) / hull.length,
                     hull.reduce((sum, p) => sum + p[1], 0) / hull.length,
                   ];
-                  const toCenter: [number, number] = [centroid[0] - current[0], centroid[1] - current[1]];
+                  const toCenter: [number, number] = [
+                    centroid[0] - current[0],
+                    centroid[1] - current[1],
+                  ];
 
                   if (perp1[0] * toCenter[0] + perp1[1] * toCenter[1] > 0) {
                     perp1[0] = -perp1[0];
@@ -1913,11 +2133,14 @@ function App() {
                   }
 
                   // Compute offset edge lines
-                  const offsetEdge1_p1 = [prev[0] + perp1[0] * offset, prev[1] + perp1[1] * offset] as [number, number];
-                  const offsetEdge1_p2 = [current[0] + perp1[0] * offset, current[1] + perp1[1] * offset] as [
-                    number,
-                    number,
-                  ];
+                  const offsetEdge1_p1 = [
+                    prev[0] + perp1[0] * offset,
+                    prev[1] + perp1[1] * offset,
+                  ] as [number, number];
+                  const offsetEdge1_p2 = [
+                    current[0] + perp1[0] * offset,
+                    current[1] + perp1[1] * offset,
+                  ] as [number, number];
 
                   if (i === 0) {
                     // Start at the first offset edge point
@@ -1945,7 +2168,14 @@ function App() {
                     if (endAngle > startAngle) endAngle -= 2 * Math.PI;
                   }
 
-                  context.arc(current[0], current[1], radius, startAngle, endAngle, cross < 0);
+                  context.arc(
+                    current[0],
+                    current[1],
+                    radius,
+                    startAngle,
+                    endAngle,
+                    cross < 0,
+                  );
                 }
 
                 context.closePath();
@@ -1956,7 +2186,7 @@ function App() {
                 context.stroke();
               }
             }
-          } else if (viewMode === 'circles') {
+          } else if (viewMode === "circles") {
             // Circle enclosure for circles mode
             if (nodes.length < 1) return;
 
@@ -1967,7 +2197,11 @@ function App() {
             const centerY = sumY / nodes.length;
 
             // Calculate max distance from centroid
-            const maxDistance = Math.max(...nodes.map((n) => Math.sqrt((n.x - centerX) ** 2 + (n.y - centerY) ** 2)));
+            const maxDistance = Math.max(
+              ...nodes.map((n) =>
+                Math.sqrt((n.x - centerX) ** 2 + (n.y - centerY) ** 2),
+              ),
+            );
 
             // Add padding
             const circlePadding = 15;
@@ -1986,10 +2220,13 @@ function App() {
             const segments = 32;
             for (let i = 0; i < segments; i++) {
               const theta = (i / segments) * 2 * Math.PI;
-              circleHull.push([centerX + radius * Math.cos(theta), centerY + radius * Math.sin(theta)]);
+              circleHull.push([
+                centerX + radius * Math.cos(theta),
+                centerY + radius * Math.sin(theta),
+              ]);
             }
             groupHulls.set(uniqueKey, circleHull);
-          } else if (viewMode === 'boxes') {
+          } else if (viewMode === "boxes") {
             // Bounding box with rounded corners for boxes mode
             if (nodes.length < 1) return;
 
@@ -2024,30 +2261,32 @@ function App() {
 
       // Draw edges
       const hoveredNodes = hoveredNodeRef.current;
-      const hoveredNodeId = Array.isArray(hoveredNodes) ? hoveredNodes[0]?.id : hoveredNodes?.id;
+      const hoveredNodeId = Array.isArray(hoveredNodes)
+        ? hoveredNodes[0]?.id
+        : hoveredNodes?.id;
       const selectedNodeId = selectedNodeRef.current;
 
       // Check if we're in a grouping mode
       const isGroupingMode =
-        viewMode === 'circles' ||
-        viewMode === 'boxes' ||
-        viewMode === 'para-fillet' ||
-        viewMode === 'para-bezier' ||
-        viewMode === 'para-subdiv' ||
-        viewMode === 'expand-poly' ||
-        viewMode === 'circle-poly' ||
-        viewMode === 'ellipse-wrap' ||
-        viewMode === 'oriented-rect' ||
-        viewMode === 'oriented-rect-rounded' ||
-        viewMode === 'oriented-rect-roundpoly' ||
-        viewMode === 'oriented-rect-roundpoly2';
+        viewMode === "circles" ||
+        viewMode === "boxes" ||
+        viewMode === "para-fillet" ||
+        viewMode === "para-bezier" ||
+        viewMode === "para-subdiv" ||
+        viewMode === "expand-poly" ||
+        viewMode === "circle-poly" ||
+        viewMode === "ellipse-wrap" ||
+        viewMode === "oriented-rect" ||
+        viewMode === "oriented-rect-rounded" ||
+        viewMode === "oriented-rect-roundpoly" ||
+        viewMode === "oriented-rect-roundpoly2";
 
       if (isGroupingMode) {
         // Group edges by file-to-file connections for namespace imports
         const fileToNodes = new Map<string, any[]>();
         filteredNodes.forEach((node: any) => {
           const file = node.data.file;
-          const folder = node.data.folder || '';
+          const folder = node.data.folder || "";
           const uniqueKey = folder ? `${folder}/${file}` : file;
           if (!fileToNodes.has(uniqueKey)) {
             fileToNodes.set(uniqueKey, []);
@@ -2060,36 +2299,46 @@ function App() {
         fileToNodes.forEach((nodes, file) => {
           const sumX = nodes.reduce((sum, n) => sum + n.x, 0);
           const sumY = nodes.reduce((sum, n) => sum + n.y, 0);
-          fileCentroids.set(file, { x: sumX / nodes.length, y: sumY / nodes.length });
+          fileCentroids.set(file, {
+            x: sumX / nodes.length,
+            y: sumY / nodes.length,
+          });
         });
 
         // Separate edge types for polygon view:
         // - Wildcard imports: source file centroid -> target file centroid
         // - Named imports: source file centroid -> target symbol node
         // - Symbol-level dynamic imports: source symbol node -> target file centroid
-        const fileConnections = new Map<string, Map<string, { count: number; types: Set<string> }>>();
+        const fileConnections = new Map<
+          string,
+          Map<string, { count: number; types: Set<string> }>
+        >();
         const namedImportEdges: any[] = []; // source file -> target symbol
         const symbolLevelEdges: any[] = []; // source symbol -> target file
         const processedEdges = new Set<string>();
 
         filteredEdges.forEach((edge: any) => {
           // Skip intra-file edges in grouping modes
-          const sourceFolder = edge.source.data.folder || '';
-          const targetFolder = edge.target.data.folder || '';
-          const sourceKey = sourceFolder ? `${sourceFolder}/${edge.source.data.file}` : edge.source.data.file;
-          const targetKey = targetFolder ? `${targetFolder}/${edge.target.data.file}` : edge.target.data.file;
+          const sourceFolder = edge.source.data.folder || "";
+          const targetFolder = edge.target.data.folder || "";
+          const sourceKey = sourceFolder
+            ? `${sourceFolder}/${edge.source.data.file}`
+            : edge.source.data.file;
+          const targetKey = targetFolder
+            ? `${targetFolder}/${edge.target.data.file}`
+            : edge.target.data.file;
 
           if (sourceKey === targetKey) {
             return;
           }
 
           // Symbol-level: dynamic imports from specific functions
-          if (edge.sourceSymbolType === 'function') {
+          if (edge.sourceSymbolType === "function") {
             symbolLevelEdges.push(edge);
             processedEdges.add(edge.id);
           }
           // Named imports: source file -> target symbol (not wildcard, not symbol-level)
-          else if (edge.type === 'import' || edge.type === 're-export') {
+          else if (edge.type === "import" || edge.type === "re-export") {
             namedImportEdges.push(edge);
             processedEdges.add(edge.id);
           }
@@ -2115,8 +2364,8 @@ function App() {
           if (!sourceCentroid) return;
 
           // Get folder color for the source file
-          const sourcePathParts = sourceFile.split('/');
-          const sourceFolder = sourcePathParts.slice(0, -1).join('/') || 'root';
+          const sourcePathParts = sourceFile.split("/");
+          const sourceFolder = sourcePathParts.slice(0, -1).join("/") || "root";
           const sourceColor = colorScale(sourceFolder) as string;
 
           // Convert hex to rgba
@@ -2133,8 +2382,11 @@ function App() {
             if (!targetCentroid) return;
 
             // Use line width based on edge count (min 2, max 8)
-            const lineWidth = Math.min(8, Math.max(2, Math.log2(connection.count) + 2));
-            const isWildcard = connection.types.has('wildcard');
+            const lineWidth = Math.min(
+              8,
+              Math.max(2, Math.log2(connection.count) + 2),
+            );
+            const isWildcard = connection.types.has("wildcard");
 
             context.beginPath();
             context.moveTo(sourceCentroid.x, sourceCentroid.y);
@@ -2149,8 +2401,10 @@ function App() {
 
         // Draw named import edges from source file centroid to target symbol node
         namedImportEdges.forEach((edge: any) => {
-          const sourceFolder = edge.source.data.folder || '';
-          const sourceKey = sourceFolder ? `${sourceFolder}/${edge.source.data.file}` : edge.source.data.file;
+          const sourceFolder = edge.source.data.folder || "";
+          const sourceKey = sourceFolder
+            ? `${sourceFolder}/${edge.source.data.file}`
+            : edge.source.data.file;
           const sourceCentroid = fileCentroids.get(sourceKey);
 
           if (!sourceCentroid) return;
@@ -2171,20 +2425,31 @@ function App() {
           context.beginPath();
           context.moveTo(sourceCentroid.x, sourceCentroid.y);
           context.lineTo(targetX, targetY);
-          context.strokeStyle = colorScale(folderMap.get(edge.source.id) || 'root') as string;
+          context.strokeStyle = colorScale(
+            folderMap.get(edge.source.id) || "root",
+          ) as string;
           context.lineWidth = 2;
-          const isOutgoingFromHovered = hoveredNodeId && edge.source.id === hoveredNodeId;
-          const isOutgoingFromSelected = selectedNodeId && edge.source.id === selectedNodeId;
-          const isHoveredEdge = hoveredEdgesRef.current.some((e: any) => e.id === edge.id);
-          context.globalAlpha = isOutgoingFromHovered || isOutgoingFromSelected || isHoveredEdge ? 1 : edgeOpacity;
+          const isOutgoingFromHovered =
+            hoveredNodeId && edge.source.id === hoveredNodeId;
+          const isOutgoingFromSelected =
+            selectedNodeId && edge.source.id === selectedNodeId;
+          const isHoveredEdge = hoveredEdgesRef.current.some(
+            (e: any) => e.id === edge.id,
+          );
+          context.globalAlpha =
+            isOutgoingFromHovered || isOutgoingFromSelected || isHoveredEdge
+              ? 1
+              : edgeOpacity;
           context.stroke();
           context.globalAlpha = 1;
         });
 
         // Draw symbol-level edges from specific symbol nodes to target file centroids
         symbolLevelEdges.forEach((edge: any) => {
-          const targetFolder = edge.target.data.folder || '';
-          const targetKey = targetFolder ? `${targetFolder}/${edge.target.data.file}` : edge.target.data.file;
+          const targetFolder = edge.target.data.folder || "";
+          const targetKey = targetFolder
+            ? `${targetFolder}/${edge.target.data.file}`
+            : edge.target.data.file;
           const targetCentroid = fileCentroids.get(targetKey);
 
           if (!targetCentroid) return;
@@ -2205,21 +2470,30 @@ function App() {
           context.beginPath();
           context.moveTo(edge.source.x, edge.source.y);
           context.lineTo(targetX, targetY);
-          context.strokeStyle = colorScale(folderMap.get(edge.source.id) || 'root') as string;
+          context.strokeStyle = colorScale(
+            folderMap.get(edge.source.id) || "root",
+          ) as string;
           context.lineWidth = 2;
-          const isOutgoingFromHovered = hoveredNodeId && edge.source.id === hoveredNodeId;
-          const isOutgoingFromSelected = selectedNodeId && edge.source.id === selectedNodeId;
-          const isHoveredEdge = hoveredEdgesRef.current.some((e: any) => e.id === edge.id);
-          context.globalAlpha = isOutgoingFromHovered || isOutgoingFromSelected || isHoveredEdge ? 1 : edgeOpacity;
+          const isOutgoingFromHovered =
+            hoveredNodeId && edge.source.id === hoveredNodeId;
+          const isOutgoingFromSelected =
+            selectedNodeId && edge.source.id === selectedNodeId;
+          const isHoveredEdge = hoveredEdgesRef.current.some(
+            (e: any) => e.id === edge.id,
+          );
+          context.globalAlpha =
+            isOutgoingFromHovered || isOutgoingFromSelected || isHoveredEdge
+              ? 1
+              : edgeOpacity;
           context.stroke();
           context.globalAlpha = 1;
         });
 
         // Clip edges inside groups using destination-out compositing
         // Only apply clipping for Polygon2 (oriented-rect-roundpoly2), not for Polygon
-        if (groupHulls.size > 0 && viewMode === 'oriented-rect-roundpoly2') {
+        if (groupHulls.size > 0 && viewMode === "oriented-rect-roundpoly2") {
           context.save();
-          context.globalCompositeOperation = 'destination-out';
+          context.globalCompositeOperation = "destination-out";
 
           groupHulls.forEach((hull) => {
             context.beginPath();
@@ -2252,12 +2526,21 @@ function App() {
           context.beginPath();
           context.moveTo(edge.source.x, edge.source.y);
           context.lineTo(targetX, targetY);
-          context.strokeStyle = colorScale(folderMap.get(edge.source.id) || 'root') as string;
+          context.strokeStyle = colorScale(
+            folderMap.get(edge.source.id) || "root",
+          ) as string;
           context.lineWidth = 2;
-          const isOutgoingFromHovered = hoveredNodeId && edge.source.id === hoveredNodeId;
-          const isOutgoingFromSelected = selectedNodeId && edge.source.id === selectedNodeId;
-          const isHoveredEdge = hoveredEdgesRef.current.some((e: any) => e.id === edge.id);
-          context.globalAlpha = isOutgoingFromHovered || isOutgoingFromSelected || isHoveredEdge ? 1 : edgeOpacity;
+          const isOutgoingFromHovered =
+            hoveredNodeId && edge.source.id === hoveredNodeId;
+          const isOutgoingFromSelected =
+            selectedNodeId && edge.source.id === selectedNodeId;
+          const isHoveredEdge = hoveredEdgesRef.current.some(
+            (e: any) => e.id === edge.id,
+          );
+          context.globalAlpha =
+            isOutgoingFromHovered || isOutgoingFromSelected || isHoveredEdge
+              ? 1
+              : edgeOpacity;
           context.stroke();
           context.globalAlpha = 1;
         });
@@ -2270,20 +2553,24 @@ function App() {
         const isHovered = Array.isArray(hoveredNodes)
           ? hoveredNodes.some((n: any) => n.id === node.id)
           : hoveredNodes?.id === node.id;
-        const isEdgeSource = hoveredEdgesRef.current.some((e: any) => node.id === e.source.id);
+        const isEdgeSource = hoveredEdgesRef.current.some(
+          (e: any) => node.id === e.source.id,
+        );
         const hasUnknownDynamicImport = node.data.hasUnknownDynamicImport;
 
         context.beginPath();
         context.arc(node.x, node.y, isSelected ? 7 : 5, 0, 2 * Math.PI);
-        context.fillStyle = colorScale(folderMap.get(node.id) || 'root') as string;
+        context.fillStyle = colorScale(
+          folderMap.get(node.id) || "root",
+        ) as string;
         context.fill();
 
         // Use orange border for nodes with unknown dynamic imports
         if (hasUnknownDynamicImport && !isSelected) {
-          context.strokeStyle = '#f97316'; // orange-500
+          context.strokeStyle = "#f97316"; // orange-500
           context.lineWidth = 2;
         } else {
-          context.strokeStyle = isSelected ? '#ffffff' : '#171717';
+          context.strokeStyle = isSelected ? "#ffffff" : "#171717";
           context.lineWidth = isSelected ? 2.5 : 1.5;
         }
         context.stroke();
@@ -2292,7 +2579,7 @@ function App() {
         if ((isHovered || isEdgeSource) && !isSelected) {
           context.beginPath();
           context.arc(node.x, node.y, 8, 0, 2 * Math.PI);
-          context.fillStyle = 'rgba(250, 250, 250, 0.5)';
+          context.fillStyle = "rgba(250, 250, 250, 0.5)";
           context.fill();
         }
 
@@ -2300,14 +2587,16 @@ function App() {
         if (hasUnknownDynamicImport) {
           context.beginPath();
           context.arc(node.x + 4, node.y - 4, 3, 0, 2 * Math.PI);
-          context.fillStyle = '#f97316';
+          context.fillStyle = "#f97316";
           context.fill();
         }
       });
 
       // Draw edge labels (on top of everything)
       filteredEdges.forEach((edge: any) => {
-        const isHoveredEdge = hoveredEdgesRef.current.some((e: any) => e.id === edge.id);
+        const isHoveredEdge = hoveredEdgesRef.current.some(
+          (e: any) => e.id === edge.id,
+        );
         if (edge.label && isHoveredEdge) {
           const dx = edge.target.x - edge.source.x;
           const dy = edge.target.y - edge.source.y;
@@ -2326,7 +2615,8 @@ function App() {
           const midY = (edge.source.y + targetY) / 2;
 
           // Measure text
-          context.font = '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+          context.font =
+            '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
           const textWidth = context.measureText(edge.label).width;
           const padding = 6;
           const rectWidth = textWidth + padding * 2;
@@ -2335,33 +2625,37 @@ function App() {
           const rectY = midY - rectHeight / 2;
 
           // Draw rounded rectangle background
-          context.fillStyle = 'rgba(9, 9, 11, 0.5)';
+          context.fillStyle = "rgba(9, 9, 11, 0.5)";
           context.beginPath();
           context.roundRect(rectX, rectY, rectWidth, rectHeight, 4);
           context.fill();
 
           // Draw text
-          context.fillStyle = '#fafafa';
-          context.textAlign = 'center';
-          context.textBaseline = 'middle';
+          context.fillStyle = "#fafafa";
+          context.textAlign = "center";
+          context.textBaseline = "middle";
           context.fillText(edge.label, midX, midY);
         }
       });
 
       // Draw selected label (always shows if node is selected)
       if (selectedNodeRef.current) {
-        const selectedNode = filteredNodes.find((n: any) => n.id === selectedNodeRef.current);
+        const selectedNode = filteredNodes.find(
+          (n: any) => n.id === selectedNodeRef.current,
+        );
         if (selectedNode) {
-          const lastDotIndex = selectedNode.id.lastIndexOf('.');
+          const lastDotIndex = selectedNode.id.lastIndexOf(".");
           const pathPart = selectedNode.id.substring(0, lastDotIndex);
           const symbolPart = selectedNode.id.substring(lastDotIndex + 1);
 
           // Measure symbol part with bold font
-          context.font = 'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+          context.font =
+            'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
           const symbolWidth = context.measureText(symbolPart).width;
 
           // Measure path part with normal font
-          context.font = '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+          context.font =
+            '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
           const pathWidth = context.measureText(` ${pathPart}`).width;
 
           const totalWidth = symbolWidth + pathWidth;
@@ -2374,19 +2668,21 @@ function App() {
           const textY = rectY + rectHeight / 2 + 3; // Center text vertically with slight offset for baseline
 
           // Draw rounded rectangle background (zinc-950 transparent)
-          context.fillStyle = 'rgba(9, 9, 11, 0.5)';
+          context.fillStyle = "rgba(9, 9, 11, 0.5)";
           context.beginPath();
           context.roundRect(rectX, rectY, rectWidth, rectHeight, 4);
           context.fill();
 
           // Draw symbol (bold, white)
-          context.font = 'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-          context.fillStyle = '#fafafa'; // neutral-50
+          context.font =
+            'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+          context.fillStyle = "#fafafa"; // neutral-50
           context.fillText(symbolPart, startX, textY);
 
           // Draw path (normal, gray)
-          context.font = '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-          context.fillStyle = '#fafafa'; // neutral-50
+          context.font =
+            '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+          context.fillStyle = "#fafafa"; // neutral-50
           context.fillText(` ${pathPart}`, startX + symbolWidth, textY);
         }
       }
@@ -2397,16 +2693,20 @@ function App() {
         !Array.isArray(hoveredNodeRef.current) &&
         hoveredNodeRef.current.id !== selectedNodeRef.current
       ) {
-        const lastDotIndex = hoveredNodeRef.current.id.lastIndexOf('.');
+        const lastDotIndex = hoveredNodeRef.current.id.lastIndexOf(".");
         const pathPart = hoveredNodeRef.current.id.substring(0, lastDotIndex);
-        const symbolPart = hoveredNodeRef.current.id.substring(lastDotIndex + 1);
+        const symbolPart = hoveredNodeRef.current.id.substring(
+          lastDotIndex + 1,
+        );
 
         // Measure symbol part with bold font
-        context.font = 'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        context.font =
+          'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
         const symbolWidth = context.measureText(symbolPart).width;
 
         // Measure path part with normal font
-        context.font = '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        context.font =
+          '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
         const pathWidth = context.measureText(` ${pathPart}`).width;
 
         const totalWidth = symbolWidth + pathWidth;
@@ -2419,19 +2719,21 @@ function App() {
         const textY = rectY + rectHeight / 2 + 3; // Center text vertically with slight offset for baseline
 
         // Draw rounded rectangle background (zinc-950 transparent)
-        context.fillStyle = 'rgba(9, 9, 11, 0.5)';
+        context.fillStyle = "rgba(9, 9, 11, 0.5)";
         context.beginPath();
         context.roundRect(rectX, rectY, rectWidth, rectHeight, 4);
         context.fill();
 
         // Draw symbol (bold, white)
-        context.font = 'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        context.fillStyle = '#fafafa'; // neutral-50
+        context.font =
+          'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        context.fillStyle = "#fafafa"; // neutral-50
         context.fillText(symbolPart, startX, textY);
 
         // Draw path (normal, gray)
-        context.font = '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        context.fillStyle = '#fafafa'; // neutral-50
+        context.font =
+          '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        context.fillStyle = "#fafafa"; // neutral-50
         context.fillText(` ${pathPart}`, startX + symbolWidth, textY);
       }
 
@@ -2454,8 +2756,12 @@ function App() {
       }
 
       const rect = canvas.getBoundingClientRect();
-      const mouseX = (event.clientX - rect.left - transformRef.current.x) / transformRef.current.k;
-      const mouseY = (event.clientY - rect.top - transformRef.current.y) / transformRef.current.k;
+      const mouseX =
+        (event.clientX - rect.left - transformRef.current.x) /
+        transformRef.current.k;
+      const mouseY =
+        (event.clientY - rect.top - transformRef.current.y) /
+        transformRef.current.k;
       mousePositionRef.current = { x: mouseX, y: mouseY };
 
       // Handle drag
@@ -2490,11 +2796,17 @@ function App() {
           // Calculate distance from point to line segment
           const t = Math.max(
             0,
-            Math.min(1, ((mouseX - edge.source.x) * dx + (mouseY - edge.source.y) * dy) / (distance * distance))
+            Math.min(
+              1,
+              ((mouseX - edge.source.x) * dx + (mouseY - edge.source.y) * dy) /
+                (distance * distance),
+            ),
           );
           const projX = edge.source.x + t * dx;
           const projY = edge.source.y + t * dy;
-          const distToLine = Math.sqrt((mouseX - projX) ** 2 + (mouseY - projY) ** 2);
+          const distToLine = Math.sqrt(
+            (mouseX - projX) ** 2 + (mouseY - projY) ** 2,
+          );
 
           if (distToLine < 5) {
             hoveredEdgesList.push(edge);
@@ -2505,7 +2817,11 @@ function App() {
       if (found !== hoveredNodeRef.current) {
         hoveredNodeRef.current = found;
         setHoveredSymbolId(found ? found.id : null);
-        canvas.style.cursor = found ? 'pointer' : hoveredEdgesList.length > 0 ? 'pointer' : 'default';
+        canvas.style.cursor = found
+          ? "pointer"
+          : hoveredEdgesList.length > 0
+            ? "pointer"
+            : "default";
         draw();
       }
 
@@ -2516,17 +2832,17 @@ function App() {
       } else {
         setHoveredEdges(hoveredEdgesList);
         if (hoveredEdgesList.length > 0) {
-          canvas.style.cursor = 'pointer';
+          canvas.style.cursor = "pointer";
           draw();
         } else {
-          canvas.style.cursor = 'default';
+          canvas.style.cursor = "default";
           draw();
         }
       }
     };
 
-    canvas.addEventListener('mousemove', handleMouseMove);
-    canvas.addEventListener('mouseenter', () => {
+    canvas.addEventListener("mousemove", handleMouseMove);
+    canvas.addEventListener("mouseenter", () => {
       mouseOverCanvasRef.current = true;
     });
 
@@ -2540,8 +2856,12 @@ function App() {
       }
 
       const rect = canvas.getBoundingClientRect();
-      const mouseX = (event.clientX - rect.left - transformRef.current.x) / transformRef.current.k;
-      const mouseY = (event.clientY - rect.top - transformRef.current.y) / transformRef.current.k;
+      const mouseX =
+        (event.clientX - rect.left - transformRef.current.x) /
+        transformRef.current.k;
+      const mouseY =
+        (event.clientY - rect.top - transformRef.current.y) /
+        transformRef.current.k;
 
       // Check for node click (selection)
       let nodeClicked = false;
@@ -2578,7 +2898,7 @@ function App() {
       }
     };
 
-    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener("mousedown", handleMouseDown);
 
     const handleMouseUp = () => {
       isPanning = false;
@@ -2592,7 +2912,7 @@ function App() {
       }
     };
 
-    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener("mouseup", handleMouseUp);
 
     const handleMouseLeave = () => {
       mouseOverCanvasRef.current = false;
@@ -2610,32 +2930,41 @@ function App() {
       draw();
     };
 
-    canvas.addEventListener('mouseleave', handleMouseLeave);
+    canvas.addEventListener("mouseleave", handleMouseLeave);
 
     const handleContextMenu = (event: Event) => {
       event.preventDefault();
     };
 
-    canvas.addEventListener('contextmenu', handleContextMenu);
+    canvas.addEventListener("contextmenu", handleContextMenu);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener("resize", handleResize);
       if (simulationRef.current) {
         simulationRef.current.stop();
       }
-      canvas.removeEventListener('wheel', handleWheel);
-      canvas.removeEventListener('mousemove', handleMouseMove);
-      canvas.removeEventListener('mousedown', handleMouseDown);
-      canvas.removeEventListener('mouseup', handleMouseUp);
-      canvas.removeEventListener('mouseleave', handleMouseLeave);
-      canvas.removeEventListener('contextmenu', handleContextMenu);
+      canvas.removeEventListener("wheel", handleWheel);
+      canvas.removeEventListener("mousemove", handleMouseMove);
+      canvas.removeEventListener("mousedown", handleMouseDown);
+      canvas.removeEventListener("mouseup", handleMouseUp);
+      canvas.removeEventListener("mouseleave", handleMouseLeave);
+      canvas.removeEventListener("contextmenu", handleContextMenu);
     };
-  }, [filteredNodes, filteredEdges, folderMap, colorScale, hiddenPaths, hiddenNodes, edgeOpacity, viewMode]);
+  }, [
+    filteredNodes,
+    filteredEdges,
+    folderMap,
+    colorScale,
+    hiddenPaths,
+    hiddenNodes,
+    edgeOpacity,
+    viewMode,
+  ]);
 
   // Handle sidebar resize without re-initializing simulation
   useEffect(() => {
     sidebarOpenRef.current = sidebarOpen;
-    localStorage.setItem('sidebarOpen', JSON.stringify(sidebarOpen));
+    localStorage.setItem("sidebarOpen", JSON.stringify(sidebarOpen));
     if (resizeRef.current) {
       resizeRef.current();
     }
@@ -2644,7 +2973,7 @@ function App() {
   // Handle right sidebar resize without re-initializing simulation
   useEffect(() => {
     rightSidebarOpenRef.current = rightSidebarOpen;
-    localStorage.setItem('rightSidebarOpen', JSON.stringify(rightSidebarOpen));
+    localStorage.setItem("rightSidebarOpen", JSON.stringify(rightSidebarOpen));
     if (resizeRef.current) {
       resizeRef.current();
     }
@@ -2652,36 +2981,42 @@ function App() {
 
   // Persist hiddenPaths to localStorage
   useEffect(() => {
-    localStorage.setItem('hiddenPaths', JSON.stringify(Array.from(hiddenPaths)));
+    localStorage.setItem(
+      "hiddenPaths",
+      JSON.stringify(Array.from(hiddenPaths)),
+    );
   }, [hiddenPaths]);
 
   // Persist hiddenNodes to localStorage
   useEffect(() => {
-    localStorage.setItem('hiddenNodes', JSON.stringify(Array.from(hiddenNodes)));
+    localStorage.setItem(
+      "hiddenNodes",
+      JSON.stringify(Array.from(hiddenNodes)),
+    );
   }, [hiddenNodes]);
 
   // Persist D3 parameters to localStorage
   useEffect(() => {
-    localStorage.setItem('chargeStrength', JSON.stringify(chargeStrength));
+    localStorage.setItem("chargeStrength", JSON.stringify(chargeStrength));
   }, [chargeStrength]);
 
   useEffect(() => {
-    localStorage.setItem('linkDistance', JSON.stringify(linkDistance));
+    localStorage.setItem("linkDistance", JSON.stringify(linkDistance));
   }, [linkDistance]);
 
   useEffect(() => {
-    localStorage.setItem('alphaDecayValue', JSON.stringify(alphaDecayValue));
+    localStorage.setItem("alphaDecayValue", JSON.stringify(alphaDecayValue));
   }, [alphaDecayValue]);
 
   useEffect(() => {
-    localStorage.setItem('edgeOpacity', JSON.stringify(edgeOpacity));
+    localStorage.setItem("edgeOpacity", JSON.stringify(edgeOpacity));
   }, [edgeOpacity]);
 
   // Update simulation forces when D3 parameters change
   useEffect(() => {
     if (simulationRef.current) {
-      simulationRef.current.force('charge').strength(chargeStrength);
-      simulationRef.current.force('link').distance(linkDistance);
+      simulationRef.current.force("charge").strength(chargeStrength);
+      simulationRef.current.force("link").distance(linkDistance);
       simulationRef.current.alpha(0.3).restart();
     }
   }, [chargeStrength, linkDistance]);
@@ -2710,7 +3045,7 @@ function App() {
   useEffect(() => {
     if (simulationRef.current && filteredNodes.length > 0) {
       simulationRef.current.nodes(filteredNodes as any);
-      simulationRef.current.force('link').links(filteredEdges as any);
+      simulationRef.current.force("link").links(filteredEdges as any);
       simulationRef.current.alpha(1).restart();
     }
   }, [filteredNodes, filteredEdges]);
@@ -2719,14 +3054,14 @@ function App() {
     <div className="h-screen w-screen bg-neutral-900 flex">
       {/* Sidebar */}
       <div
-        className={`bg-neutral-900 overflow-hidden ${sidebarOpen ? 'border-r border-neutral-700' : ''}`}
-        style={{ width: sidebarOpen ? '300px' : '0px' }}
+        className={`bg-neutral-900 overflow-hidden ${sidebarOpen ? "border-r border-neutral-700" : ""}`}
+        style={{ width: sidebarOpen ? "300px" : "0px" }}
       >
         <div className="p-4">
           <div
             className="flex items-center gap-2 cursor-pointer hover:bg-neutral-800 p-2 rounded-lg select-none"
             onClick={() => setSidebarOpen(false)}
-            style={{ maxWidth: 'fit-content' }}
+            style={{ maxWidth: "fit-content" }}
           >
             <Menu size={24} className="text-neutral-50" />
             <h1 className="font-semibold text-neutral-50">Symbol Explorer</h1>
@@ -2790,7 +3125,10 @@ function App() {
                     </button>
                   </Tooltip>
                 </div>
-                <div className="p-2 overflow-y-scroll" style={{ height: 'calc(100vh - 180px)' }}>
+                <div
+                  className="p-2 overflow-y-scroll"
+                  style={{ height: "calc(100vh - 180px)" }}
+                >
                   <MemoizedTreeNode
                     data={treeStructure}
                     path=""
@@ -2821,7 +3159,7 @@ function App() {
           {!sidebarOpen && (
             <div
               className="flex items-center gap-2 cursor-pointer p-2 rounded-lg select-none"
-              style={{ maxWidth: 'fit-content' }}
+              style={{ maxWidth: "fit-content" }}
               onClick={() => setSidebarOpen(true)}
             >
               <Menu size={24} className="text-neutral-50" />
@@ -2831,7 +3169,10 @@ function App() {
         </div>
         <div className="absolute top-6 right-6 z-10">
           {!rightSidebarOpen && (
-            <div onClick={() => setRightSidebarOpen(!rightSidebarOpen)} className="cursor-pointer select-none">
+            <div
+              onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+              className="cursor-pointer select-none"
+            >
               <Settings size={24} className="text-neutral-400" />
             </div>
           )}
@@ -2842,7 +3183,9 @@ function App() {
             <div className="text-center">
               <FolderOpen size={64} className="text-neutral-600 mx-auto mb-4" />
               <p className="text-neutral-400 text-lg mb-2">No data loaded</p>
-              <p className="text-neutral-500 text-sm">Click the folder icon in the sidebar to import a directory</p>
+              <p className="text-neutral-500 text-sm">
+                Click the folder icon in the sidebar to import a directory
+              </p>
             </div>
           </div>
         )}
@@ -2850,13 +3193,16 @@ function App() {
 
       {/* Right sidebar */}
       <div
-        className={`bg-neutral-900 overflow-hidden ${rightSidebarOpen ? 'border-l border-neutral-700' : ''}`}
-        style={{ width: rightSidebarOpen ? '300px' : '0px' }}
+        className={`bg-neutral-900 overflow-hidden ${rightSidebarOpen ? "border-l border-neutral-700" : ""}`}
+        style={{ width: rightSidebarOpen ? "300px" : "0px" }}
       >
         <div className="p-4">
           <div className="p-2 flex items-center justify-between">
             <h1 className="font-semibold text-neutral-50">Settings</h1>
-            <div onClick={() => setRightSidebarOpen(false)} className="cursor-pointer select-none">
+            <div
+              onClick={() => setRightSidebarOpen(false)}
+              className="cursor-pointer select-none"
+            >
               <Settings size={24} className="text-neutral-400" />
             </div>
           </div>
@@ -2867,7 +3213,7 @@ function App() {
               <button
                 onClick={() => !simulationLocked && toggleSimulationLock()}
                 disabled={simulationLocked}
-                className={`p-2 rounded-lg cursor-pointer ${simulationLocked ? 'text-neutral-600 cursor-not-allowed' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}`}
+                className={`p-2 rounded-lg cursor-pointer ${simulationLocked ? "text-neutral-600 cursor-not-allowed" : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700"}`}
               >
                 <Lock size={16} />
               </button>
@@ -2876,7 +3222,7 @@ function App() {
               <button
                 onClick={() => simulationLocked && toggleSimulationLock()}
                 disabled={!simulationLocked}
-                className={`p-2 rounded-lg cursor-pointer ${!simulationLocked ? 'text-neutral-600 cursor-not-allowed' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}`}
+                className={`p-2 rounded-lg cursor-pointer ${!simulationLocked ? "text-neutral-600 cursor-not-allowed" : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700"}`}
               >
                 <Unlock size={16} />
               </button>
@@ -2885,7 +3231,7 @@ function App() {
               <button
                 onClick={() => !forcesEnabled && toggleForces()}
                 disabled={forcesEnabled}
-                className={`p-2 rounded-lg cursor-pointer ${forcesEnabled ? 'text-neutral-600 cursor-not-allowed' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}`}
+                className={`p-2 rounded-lg cursor-pointer ${forcesEnabled ? "text-neutral-600 cursor-not-allowed" : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700"}`}
               >
                 <Play size={16} />
               </button>
@@ -2894,7 +3240,7 @@ function App() {
               <button
                 onClick={() => forcesEnabled && toggleForces()}
                 disabled={!forcesEnabled}
-                className={`p-2 rounded-lg cursor-pointer ${!forcesEnabled ? 'text-neutral-600 cursor-not-allowed' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}`}
+                className={`p-2 rounded-lg cursor-pointer ${!forcesEnabled ? "text-neutral-600 cursor-not-allowed" : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700"}`}
               >
                 <Pause size={16} />
               </button>
@@ -2911,95 +3257,101 @@ function App() {
         </div>
         <div className="px-4 pb-4 space-y-4">
           <div>
-            <label className="block text-sm text-neutral-400 mb-2">View Mode</label>
+            <label className="block text-sm text-neutral-400 mb-2">
+              View Mode
+            </label>
             <div className="flex flex-wrap gap-2">
               <ViewModeButton
                 mode="oriented-rect-roundpoly"
                 label="Polygon"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('oriented-rect-roundpoly')}
+                onClick={() => setViewMode("oriented-rect-roundpoly")}
               />
               <ViewModeButton
                 mode="edges"
                 label="Edges"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('edges')}
+                onClick={() => setViewMode("edges")}
               />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-500 mb-2 text-xs uppercase tracking-wide">
+              Experimental
+            </label>
+            <div className="flex flex-wrap gap-2">
               <ViewModeButton
                 mode="ellipse-wrap"
                 label="Ellipse"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('ellipse-wrap')}
+                onClick={() => setViewMode("ellipse-wrap")}
               />
               <ViewModeButton
                 mode="circles"
                 label="Circles"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('circles')}
+                onClick={() => setViewMode("circles")}
               />
               <ViewModeButton
                 mode="boxes"
                 label="Blocks"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('boxes')}
+                onClick={() => setViewMode("boxes")}
               />
               <ViewModeButton
                 mode="oriented-rect"
                 label="Rectangles"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('oriented-rect')}
+                onClick={() => setViewMode("oriented-rect")}
               />
               <ViewModeButton
                 mode="oriented-rect-rounded"
                 label="Capsules"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('oriented-rect-rounded')}
+                onClick={() => setViewMode("oriented-rect-rounded")}
               />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm text-neutral-500 mb-2 text-xs uppercase tracking-wide">Experimental</label>
-            <div className="flex flex-wrap gap-2">
               <ViewModeButton
                 mode="para-fillet"
                 label="Fillet"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('para-fillet')}
+                onClick={() => setViewMode("para-fillet")}
               />
               <ViewModeButton
                 mode="para-bezier"
                 label="Bezier"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('para-bezier')}
+                onClick={() => setViewMode("para-bezier")}
               />
               <ViewModeButton
                 mode="para-subdiv"
                 label="Subdiv"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('para-subdiv')}
+                onClick={() => setViewMode("para-subdiv")}
               />
               <ViewModeButton
                 mode="expand-poly"
                 label="ExpPoly"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('expand-poly')}
+                onClick={() => setViewMode("expand-poly")}
               />
               <ViewModeButton
                 mode="circle-poly"
                 label="CirPoly"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('circle-poly')}
+                onClick={() => setViewMode("circle-poly")}
               />
               <ViewModeButton
                 mode="oriented-rect-roundpoly2"
                 label="Polygon2"
                 currentViewMode={viewMode}
-                onClick={() => setViewMode('oriented-rect-roundpoly2')}
+                onClick={() => setViewMode("oriented-rect-roundpoly2")}
               />
             </div>
           </div>
           <div>
-            <label className="block text-sm text-neutral-400 mb-2">Charge Strength</label>
+            <label className="block text-sm text-neutral-400 mb-2">
+              Charge Strength
+            </label>
             <input
               type="number"
               value={chargeStrength}
@@ -3008,7 +3360,9 @@ function App() {
             />
           </div>
           <div>
-            <label className="block text-sm text-neutral-400 mb-2">Link Distance</label>
+            <label className="block text-sm text-neutral-400 mb-2">
+              Link Distance
+            </label>
             <input
               type="number"
               value={linkDistance}
@@ -3017,7 +3371,9 @@ function App() {
             />
           </div>
           <div>
-            <label className="block text-sm text-neutral-400 mb-2">Alpha Decay</label>
+            <label className="block text-sm text-neutral-400 mb-2">
+              Alpha Decay
+            </label>
             <input
               type="number"
               step="0.0001"
@@ -3027,7 +3383,9 @@ function App() {
             />
           </div>
           <div>
-            <label className="block text-sm text-neutral-400 mb-2">Edge Opacity</label>
+            <label className="block text-sm text-neutral-400 mb-2">
+              Edge Opacity
+            </label>
             <input
               type="number"
               step="0.1"
