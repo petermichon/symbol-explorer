@@ -747,8 +747,20 @@ function App() {
         setCustomData(parsedData);
         setViewData(viewData);
       } catch (err) {
-        console.error("Error loading directory data:", err);
-        alert("Error loading directory data: " + (err as Error).message);
+        const errorMessage = (err as Error).message;
+        // Don't alert for permission errors - they're expected when handles lack user gesture
+        if (
+          errorMessage.includes("not allowed") ||
+          errorMessage.includes("permission")
+        ) {
+          console.warn(
+            "Permission error loading directory (user gesture required):",
+            err,
+          );
+        } else {
+          console.error("Error loading directory data:", err);
+          alert("Error loading directory data: " + errorMessage);
+        }
       } finally {
         setIsLoading(false);
       }
@@ -883,11 +895,22 @@ function App() {
         );
         setSavedDirectories(sortedDirectories);
 
-        // Auto-load the most recent directory
+        // Auto-load the most recent directory if it has read permission
         if (sortedDirectories.length > 0) {
           const mostRecent = sortedDirectories[0];
-          setDirectoryHandle(mostRecent.handle);
-          await loadDirectoryData(mostRecent.handle);
+          try {
+            // Check if we have read permission
+            const permission = await mostRecent.handle.queryPermission({
+              mode: "read",
+            });
+            if (permission === "granted") {
+              setDirectoryHandle(mostRecent.handle);
+              await loadDirectoryData(mostRecent.handle);
+            }
+          } catch (err) {
+            // Permission not granted or query failed - silently skip
+            console.warn("Permission check failed:", err);
+          }
         }
       } catch (err) {
         console.warn("Failed to load saved directories:", err);
