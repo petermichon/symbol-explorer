@@ -1,13 +1,11 @@
-import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import * as d3 from "d3";
 import {
-  Folder,
-  File,
   Eye,
   EyeOff,
-  CopyMinus,
   CopyPlus,
+  CopyMinus,
   Menu,
   Eye as EyeOpen,
   Lock,
@@ -16,17 +14,78 @@ import {
   Pause,
   RefreshCw,
   Settings,
+  Folder,
   FolderOpen,
-  FolderSymlink,
   X,
+  FileBox,
+  FileCode2,
+  Circle,
+  ChevronRight,
 } from "lucide-react";
 import "./index.css";
 import {
   parseFilesMinimal,
   ParsedData,
   buildGraphFromMinimal,
-  extractSymbolsFromFile,
 } from "./browserParser";
+
+// Generic tree data structure
+export interface TreeNode<T = any> {
+  id: string;
+  data: T;
+  children: TreeNode<T>[];
+  isExpanded?: boolean;
+  isHidden?: boolean;
+}
+
+export interface TreeConfig<T = any> {
+  renderNode: (node: TreeNode<T>) => React.ReactNode;
+  expandedNodes: Set<string>;
+  hiddenNodes: Set<string>;
+}
+
+// Generic Tree component
+function Tree<T>({
+  nodes,
+  config,
+}: {
+  nodes: TreeNode<T>[];
+  config: TreeConfig<T>;
+}) {
+  const { renderNode, expandedNodes, hiddenNodes } = config;
+
+  function renderTreeNode(
+    node: TreeNode<T>,
+    depth: number = 0,
+    parentHidden: boolean = false,
+  ): React.ReactNode {
+    const isExpanded = expandedNodes.has(node.id);
+    // Normalize node ID for hidden check (remove .ts extension)
+    const normalizedId = node.id.replace(".ts", "");
+    const isHidden = parentHidden || hiddenNodes.has(normalizedId);
+
+    return (
+      <>
+        <div style={{ marginLeft: `${depth * 16}px` }}>
+          {renderNode({
+            ...node,
+            isExpanded,
+            isHidden,
+          })}
+        </div>
+        {isExpanded && node.children.length > 0 && (
+          <>
+            {node.children.map((child) =>
+              renderTreeNode(child, depth + 1, isHidden),
+            )}
+          </>
+        )}
+      </>
+    );
+  }
+
+  return <>{nodes.map((node) => renderTreeNode(node))}</>;
+}
 
 // IndexedDB helper for persisting directory handles
 async function openDirectoryDB(): Promise<IDBDatabase> {
@@ -116,112 +175,62 @@ function Tooltip({
   );
 }
 
-function TreeNode({
-  data,
-  path,
-  expandedFolders,
-  toggleFolder,
-  hiddenPaths,
-  togglePathVisibility,
-  colorScale,
-  onHoverFile,
-  onHoverFolder,
+function ModuleListItem({
+  name,
+  icon,
+  count,
+  type,
+  isHidden,
+  onClick,
+  onHover,
+  onLeave,
+  onToggleVisibility,
+  chevron,
 }: any) {
-  // Helper to check if a path or any of its parents is hidden
-  const isPathOrParentHidden = (itemPath: string): boolean => {
-    if (hiddenPaths.has(itemPath)) return true;
-    const parts = itemPath.split("/");
-    for (let i = 0; i < parts.length - 1; i++) {
-      const parentPath = parts.slice(0, i + 1).join("/");
-      if (hiddenPaths.has(parentPath)) return true;
-    }
-    return false;
-  };
-
   return (
-    <>
-      {Object.entries(data)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([name, item]: [string, any]) => {
-          const fullPath = path ? `${path}/${name}` : name;
-          const isExpanded = expandedFolders.has(fullPath);
-          const isFolder = item.type === "folder";
-          const isHidden = hiddenPaths.has(fullPath.replace(".ts", ""));
-          const isParentHidden = isPathOrParentHidden(fullPath);
-          const folderColor = isFolder
-            ? (colorScale(fullPath) as string)
-            : (colorScale(path || "root") as string);
-
-          return (
-            <div key={fullPath} className="mb-1">
-              <div
-                onClick={() => toggleFolder(fullPath)}
-                className="w-full text-left px-2 py-1 text-sm font-medium text-neutral-300 hover:bg-neutral-700 rounded flex items-center justify-between cursor-pointer group"
-                style={{ opacity: isHidden || isParentHidden ? 0.5 : 1 }}
-                onMouseEnter={() => {
-                  if (isFolder) onHoverFolder(fullPath);
-                  else onHoverFile(fullPath);
-                }}
-                onMouseLeave={() => {
-                  if (isFolder) onHoverFolder(null);
-                  else onHoverFile(null);
-                }}
-              >
-                <div className="flex items-center gap-1">
-                  {isFolder ? (
-                    <Folder size={16} style={{ color: folderColor }} />
-                  ) : (
-                    <File size={16} style={{ color: folderColor }} />
-                  )}
-                  <span className="truncate" style={{ color: folderColor }}>
-                    {name}
-                  </span>
-                  {isFolder && (
-                    <span className="text-neutral-500 text-sm">
-                      ({item.totalSymbols || 0})
-                    </span>
-                  )}
-                  {!isFolder && (
-                    <span className="text-neutral-500 text-sm">
-                      ({item.symbols.length})
-                    </span>
-                  )}
-                </div>
-                <Tooltip content={isHidden ? "Show" : "Hide"}>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      togglePathVisibility(fullPath);
-                    }}
-                    className={`${isHidden ? "" : "hidden group-hover:block"} cursor-pointer text-neutral-300`}
-                  >
-                    {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                </Tooltip>
-              </div>
-              {isExpanded && isFolder && (
-                <div className="ml-4 mt-1">
-                  <TreeNode
-                    data={item.children}
-                    path={fullPath}
-                    expandedFolders={expandedFolders}
-                    toggleFolder={toggleFolder}
-                    hiddenPaths={hiddenPaths}
-                    togglePathVisibility={togglePathVisibility}
-                    colorScale={colorScale}
-                    onHoverFile={onHoverFile}
-                    onHoverFolder={onHoverFolder}
-                  />
-                </div>
-              )}
-            </div>
-          );
-        })}
-    </>
+    <div
+      onClick={onClick}
+      className="w-full text-left px-2 py-1 text-sm font-medium text-neutral-300 hover:bg-neutral-700 rounded flex items-center justify-between cursor-pointer group"
+      style={{ opacity: isHidden ? 0.5 : 1, userSelect: "none" }}
+      onMouseEnter={onHover}
+      onMouseLeave={onLeave}
+    >
+      <div className="flex items-center gap-1 overflow-hidden">
+        <span
+          className="shrink-0"
+          style={{
+            width: 14,
+            display: "inline-flex",
+            justifyContent: "center",
+          }}
+        >
+          {chevron}
+        </span>
+        <span className="shrink-0">{icon}</span>
+        <span className="truncate text-neutral-300">{name}</span>
+        {count !== undefined && (
+          <span className="text-neutral-500 text-sm shrink-0">({count})</span>
+        )}
+        {type && (
+          <span className="text-neutral-600 text-xs shrink-0">{type}</span>
+        )}
+      </div>
+      {onToggleVisibility && (
+        <Tooltip content={isHidden ? "Show" : "Hide"}>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleVisibility();
+            }}
+            className={`${isHidden ? "block" : "hidden group-hover:block"} cursor-pointer text-neutral-300`}
+          >
+            {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </Tooltip>
+      )}
+    </div>
   );
 }
-
-const MemoizedTreeNode = memo(TreeNode);
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -244,9 +253,10 @@ function App() {
     return saved !== null ? JSON.parse(saved) : false;
   });
   const rightSidebarOpenRef = useRef(false);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
-    new Set(),
-  );
+  const [expandedModules, setExpandedModules] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem("expandedModules");
+    return saved !== null ? new Set(JSON.parse(saved)) : new Set();
+  });
   const [hiddenPaths, setHiddenPaths] = useState<Set<string>>(() => {
     const saved = localStorage.getItem("hiddenPaths");
     return saved !== null ? new Set(JSON.parse(saved)) : new Set();
@@ -375,53 +385,8 @@ function App() {
     [filteredNodes],
   );
 
-  const handleHoverFolder = useCallback(
-    (folderPath: string | null) => {
-      // Update hovered nodes to include all nodes from this folder and subfolders
-      if (folderPath === null) {
-        hoveredNodeRef.current = null;
-      } else {
-        const nodesInFolder = filteredNodes.filter((n: any) => {
-          const lastDotIndex = n.id.lastIndexOf(".");
-          const nodeFilePath = n.id.substring(0, lastDotIndex);
-          // Check if node's file path starts with the folder path
-          return (
-            nodeFilePath.startsWith(folderPath + "/") ||
-            nodeFilePath === folderPath
-          );
-        });
-        hoveredNodeRef.current =
-          nodesInFolder.length > 0 ? nodesInFolder : null;
-      }
-      if (drawRef.current) {
-        drawRef.current();
-      }
-    },
-    [filteredNodes],
-  );
-
   const handleSelectSymbol = useCallback((nodeId: string) => {
     setSelectedNodeId(nodeId);
-
-    // Expand the folder path for the selected node
-    const lastDotIndex = nodeId.lastIndexOf(".");
-    if (lastDotIndex !== -1) {
-      const filePath = nodeId.substring(0, lastDotIndex);
-      const pathParts = filePath.split("/");
-      const pathsToExpand: string[] = [];
-
-      let currentPath = "";
-      for (const part of pathParts) {
-        currentPath = currentPath ? `${currentPath}/${part}` : part;
-        pathsToExpand.push(currentPath);
-      }
-
-      setExpandedFolders((prev) => {
-        const next = new Set(prev);
-        pathsToExpand.forEach((path) => next.add(path));
-        return next;
-      });
-    }
   }, []);
 
   // Sync selectedNodeId to ref for use in draw function
@@ -440,74 +405,110 @@ function App() {
       map.set(node.id, folder);
     });
 
+    // Use folder paths for coloring (modules are grouped by folder)
     const folderList = Array.from(new Set(Array.from(map.values())));
     const scale = d3.scaleOrdinal(d3.schemeSet3).domain(folderList);
 
     return { folderMap: map, colorScale: scale };
   }, [generatedNodes]);
 
-  // Build hierarchical folder/file tree structure from file paths
-  const treeStructure = useMemo(() => {
-    if (!parsedData) return {};
+  // Build path-based tree structure from modules and scripts
+  const treeData = useMemo(() => {
+    if (!parsedData) return [];
 
-    const tree: Record<string, any> = {};
+    const treeRoot = new Map<string, TreeNode<any>>();
 
-    parsedData.files.forEach((file) => {
-      const path = file.path;
-      const parts = path.split("/");
-      let current = tree;
+    function getPathSegments(path: string): string[] {
+      return path.split("/").filter(Boolean);
+    }
 
-      parts.forEach((part: string, index: number) => {
-        if (!current[part]) {
-          current[part] = {
-            type: index === parts.length - 1 ? "file" : "folder",
-            children: {},
-            symbols: [],
-          };
-        }
-        if (index === parts.length - 1) {
-          // This is a file - extract symbols
-          const symbols = extractSymbolsFromFile(file.content, file.path);
-          current[part].symbols = symbols.map((s) => s.name);
-        } else {
-          current = current[part].children;
-        }
+    function getOrCreateNode(
+      path: string,
+      type: "path" | "file" | "symbol",
+    ): TreeNode<any> {
+      if (treeRoot.has(path)) {
+        return treeRoot.get(path)!;
+      }
+
+      const segments = getPathSegments(path);
+      const name = segments[segments.length - 1];
+      const node: TreeNode<any> = {
+        id: path,
+        data: {
+          name,
+          path,
+          type,
+        },
+        children: [],
+      };
+
+      treeRoot.set(path, node);
+
+      // Create parent nodes if they don't exist (only for path and file types, not symbols)
+      if (type !== "symbol" && segments.length > 1) {
+        const parentPath = segments.slice(0, -1).join("/");
+        const parentNode = getOrCreateNode(parentPath, "path");
+        parentNode.children.push(node);
+      }
+
+      return node;
+    }
+
+    // Add modules
+    parsedData.modules.forEach((module) => {
+      const fileNode = getOrCreateNode(module.path, "file");
+      fileNode.data.symbolCount = module.symbols.length;
+      fileNode.data.fileType = "module";
+
+      module.symbols.forEach((symbol) => {
+        const symbolPath = `${module.path}::${symbol.name}`;
+        const symbolNode = getOrCreateNode(symbolPath, "symbol");
+        symbolNode.data.symbolType = symbol.type;
+        symbolNode.data.modulePath = module.path;
+        symbolNode.data.name = symbol.name; // Explicitly set the symbol name
+        fileNode.children.push(symbolNode);
       });
     });
 
-    // Calculate total symbols for each folder recursively
-    function calculateTotalSymbols(node: any): number {
-      if (node.type === "file") {
-        return node.symbols.length;
-      }
-      let total = 0;
-      for (const child of Object.values(node.children)) {
-        total += calculateTotalSymbols(child);
-      }
-      node.totalSymbols = total;
-      return total;
-    }
+    // Add scripts
+    parsedData.scripts.forEach((script) => {
+      const fileNode = getOrCreateNode(script.path, "file");
+      fileNode.data.symbolCount = script.symbols.length;
+      fileNode.data.fileType = "script";
 
-    for (const key of Object.keys(tree)) {
-      calculateTotalSymbols(tree[key]);
-    }
+      script.symbols.forEach((symbol) => {
+        const symbolPath = `${script.path}::${symbol.name}`;
+        const symbolNode = getOrCreateNode(symbolPath, "symbol");
+        symbolNode.data.symbolType = symbol.type;
+        symbolNode.data.modulePath = script.path;
+        symbolNode.data.name = symbol.name; // Explicitly set the symbol name
+        fileNode.children.push(symbolNode);
+      });
+    });
 
-    return tree;
+    // Get root nodes (nodes without parents in the tree)
+    const rootNodes: TreeNode<any>[] = [];
+    const allPaths = new Set(treeRoot.keys());
+    const childPaths = new Set<string>();
+
+    treeRoot.forEach((node) => {
+      node.children.forEach((child) => {
+        childPaths.add(child.id);
+      });
+    });
+
+    allPaths.forEach((path) => {
+      if (!childPaths.has(path)) {
+        rootNodes.push(treeRoot.get(path)!);
+      }
+    });
+
+    // Sort root nodes by path
+    return rootNodes.sort((a, b) => a.data.path.localeCompare(b.data.path));
   }, [parsedData]);
 
-  const toggleFolder = useCallback((folder: string) => {
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      if (next.has(folder)) {
-        next.delete(folder);
-      } else {
-        next.add(folder);
-      }
-      return next;
-    });
-  }, []);
-
   const togglePathVisibility = useCallback((path: string) => {
+    if (!path) return;
     setHiddenPaths((prev: Set<string>) => {
       const next = new Set(prev);
       // Remove .ts extension for consistency with tree paths
@@ -521,8 +522,45 @@ function App() {
     });
   }, []);
 
-  const collapseAll = useCallback(() => {
-    setExpandedFolders(new Set());
+  const toggleModule = useCallback((moduleId: string) => {
+    setExpandedModules((prev) => {
+      const next = new Set(prev);
+      if (next.has(moduleId)) {
+        next.delete(moduleId);
+      } else {
+        next.add(moduleId);
+      }
+      localStorage.setItem("expandedModules", JSON.stringify(Array.from(next)));
+      return next;
+    });
+  }, []);
+
+  const expandAllModules = useCallback(() => {
+    if (!parsedData) return;
+    // Collect all expandable node IDs (path and file nodes)
+    const allExpandableIds = new Set<string>();
+
+    // Add all module and script file IDs
+    [...parsedData.modules, ...parsedData.scripts].forEach((m) => {
+      allExpandableIds.add(m.id);
+      // Add all parent path nodes
+      const segments = m.path.split("/").filter(Boolean);
+      for (let i = 1; i < segments.length; i++) {
+        const parentPath = segments.slice(0, i).join("/");
+        allExpandableIds.add(parentPath);
+      }
+    });
+
+    setExpandedModules(allExpandableIds);
+    localStorage.setItem(
+      "expandedModules",
+      JSON.stringify(Array.from(allExpandableIds)),
+    );
+  }, [parsedData]);
+
+  const collapseAllModules = useCallback(() => {
+    setExpandedModules(new Set());
+    localStorage.setItem("expandedModules", JSON.stringify([]));
   }, []);
 
   const showAll = useCallback(() => {
@@ -531,35 +569,126 @@ function App() {
 
   const hideAll = useCallback(() => {
     const pathsToHide = new Set<string>();
+    if (!parsedData) return;
 
-    function collectVisibleItems(node: any, currentPath: string = "") {
-      Object.entries(node).forEach(([name, item]: [string, any]) => {
-        const fullPath = currentPath ? `${currentPath}/${name}` : name;
-
-        if (item.type === "folder") {
-          if (expandedFolders.has(fullPath)) {
-            // Folder is expanded, hide its direct children
-            Object.entries(item.children).forEach(
-              ([childName, _childItem]: [string, any]) => {
-                const childPath = `${fullPath}/${childName}`;
-                pathsToHide.add(childPath);
-              },
-            );
-          } else {
-            // Folder is collapsed, hide the folder itself
-            pathsToHide.add(fullPath);
-          }
-        } else if (item.type === "file") {
-          // Files are only visible if their parent folder is expanded
-          // If we reach a file, its parent must be expanded, so hide it
-          pathsToHide.add(fullPath);
-        }
-      });
-    }
-
-    collectVisibleItems(treeStructure);
+    [...parsedData.modules, ...parsedData.scripts].forEach((module) => {
+      pathsToHide.add(module.path.replace(".ts", ""));
+    });
     setHiddenPaths(pathsToHide);
-  }, [treeStructure, expandedFolders]);
+  }, [parsedData]);
+
+  // Tree configuration for rendering
+  const treeConfig = useMemo<TreeConfig<any>>(
+    () => ({
+      renderNode: (node) => {
+        const { data, isExpanded, isHidden } = node;
+        // Extract path for coloring
+        const fullPath = data.path || data.modulePath || "root";
+        // For path nodes (folders), use their own path for coloring
+        // For file nodes, use their parent folder path for coloring
+        const colorPath =
+          data.type === "path"
+            ? fullPath
+            : fullPath.split("/").slice(0, -1).join("/") || "root";
+        const itemColor = colorScale(colorPath) as string;
+
+        // Choose icon based on type
+        let icon;
+        if (data.type === "path") {
+          // Path node - use folder icon (open if expanded)
+          icon = isExpanded ? (
+            <FolderOpen size={16} style={{ color: itemColor }} />
+          ) : (
+            <Folder size={16} style={{ color: itemColor }} />
+          );
+        } else if (data.type === "file") {
+          // File node
+          icon =
+            data.fileType === "module" ? (
+              <FileBox size={16} style={{ color: itemColor }} />
+            ) : (
+              <FileCode2 size={16} style={{ color: itemColor }} />
+            );
+        } else if (data.type === "symbol") {
+          // Symbol node
+          icon = <Circle size={16} style={{ color: itemColor }} />;
+        }
+
+        // Chevron for expandable nodes (path and file)
+        const chevron =
+          data.type === "path" || data.type === "file" ? (
+            <ChevronRight
+              size={14}
+              style={{
+                color: "#a1a1aa",
+                transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+              }}
+            />
+          ) : null;
+
+        return (
+          <ModuleListItem
+            name={data.name}
+            icon={icon}
+            color={itemColor}
+            count={data.symbolCount}
+            type={
+              data.type === "file"
+                ? data.fileType === "module"
+                  ? "module"
+                  : "script"
+                : data.type === "symbol"
+                  ? data.symbolType
+                  : undefined
+            }
+            isHidden={isHidden}
+            onClick={() => {
+              if (data.type === "path" || data.type === "file") {
+                toggleModule(node.id);
+              } else if (data.type === "symbol") {
+                handleSelectSymbol(node.id);
+              }
+            }}
+            onHover={() => {
+              if (data.type === "symbol") {
+                // Hover the specific symbol node
+                setSelectedNodeId(node.id);
+              } else {
+                // Hover all nodes from the file
+                handleHoverFile(data.type === "file" ? data.path : null);
+              }
+            }}
+            onLeave={() => {
+              if (data.type === "symbol") {
+                setSelectedNodeId(null);
+              } else {
+                handleHoverFile(null);
+              }
+            }}
+            onToggleVisibility={
+              data.type === "path" ||
+              data.type === "file" ||
+              data.type === "symbol"
+                ? () => togglePathVisibility(data.path || data.modulePath)
+                : undefined
+            }
+            chevron={chevron}
+          />
+        );
+      },
+      expandedNodes: expandedModules,
+      hiddenNodes: hiddenPaths,
+    }),
+    [
+      colorScale,
+      toggleModule,
+      handleHoverFile,
+      togglePathVisibility,
+      expandedModules,
+      hiddenPaths,
+      handleSelectSymbol,
+    ],
+  );
 
   const toggleSimulationLock = useCallback(() => {
     setSimulationLocked((prev) => {
@@ -614,23 +743,6 @@ function App() {
     }
   }, [filteredNodes]);
 
-  const expandAll = useCallback(() => {
-    const allPaths = new Set<string>();
-    function collectPaths(node: any, currentPath: string = "") {
-      Object.entries(node).forEach(([name, item]: [string, any]) => {
-        const fullPath = currentPath ? `${currentPath}/${name}` : name;
-        if (item.type === "folder") {
-          allPaths.add(fullPath);
-          collectPaths(item.children, fullPath);
-        } else if (item.type === "file") {
-          allPaths.add(fullPath);
-        }
-      });
-    }
-    collectPaths(treeStructure);
-    setExpandedFolders(allPaths);
-  }, [treeStructure]);
-
   const loadDirectoryData = useCallback(
     async (
       dirHandle: any | null,
@@ -672,7 +784,7 @@ function App() {
         // Parse the files to get minimal data format
         const data = parseFilesMinimal(files);
         console.log(
-          `Parsed ${data.files.length} files and ${data.imports.length} imports`,
+          `Parsed ${data.modules.length} modules, ${data.scripts.length} scripts, and ${data.imports.length} imports`,
         );
 
         setParsedData(data);
@@ -920,14 +1032,12 @@ function App() {
     }
     // Save current visibility states
     const savedHiddenPaths = new Set(hiddenPaths);
-    const savedExpandedFolders = new Set(expandedFolders);
 
     await loadDirectoryData(directoryHandle);
 
     // Restore visibility states
     setHiddenPaths(savedHiddenPaths);
-    setExpandedFolders(savedExpandedFolders);
-  }, [directoryHandle, loadDirectoryData, hiddenPaths, expandedFolders]);
+  }, [directoryHandle, loadDirectoryData, hiddenPaths]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -3113,10 +3223,10 @@ function App() {
     <div className="h-screen w-screen bg-neutral-900 flex">
       {/* Sidebar */}
       <div
-        className={`bg-neutral-900 overflow-hidden ${sidebarOpen ? "border-r border-neutral-700" : ""}`}
+        className={`bg-neutral-900 overflow-hidden flex flex-col h-full ${sidebarOpen ? "border-r border-neutral-700" : ""}`}
         style={{ width: sidebarOpen ? "300px" : "0px" }}
       >
-        <div className="p-4">
+        <div className="p-4 flex-shrink-0">
           <div
             className="flex items-center gap-2 cursor-pointer hover:bg-neutral-800 p-2 rounded-lg select-none"
             onClick={() => setSidebarOpen(false)}
@@ -3126,9 +3236,9 @@ function App() {
             <h1 className="font-semibold text-neutral-50">Symbol Explorer</h1>
           </div>
         </div>
-        <div>
-          <div className="flex flex-col">
-            <div className="pr-4 flex justify-end gap-1 mb-2">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex flex-col h-full">
+            <div className="pr-4 flex justify-end gap-1 mb-2 flex-shrink-0">
               <div>
                 <Tooltip content="Open Directory">
                   <button
@@ -3152,8 +3262,8 @@ function App() {
               </Tooltip>
             </div>
             {directoryHandle && (
-              <>
-                <div className="pr-4 flex justify-end gap-1">
+              <div className="flex flex-col flex-1 min-h-0">
+                <div className="pr-4 flex justify-end gap-1 shrink-0">
                   <Tooltip content="Show All">
                     <button
                       onClick={showAll}
@@ -3172,7 +3282,7 @@ function App() {
                   </Tooltip>
                   <Tooltip content="Expand All">
                     <button
-                      onClick={expandAll}
+                      onClick={expandAllModules}
                       className="p-2 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 rounded-lg cursor-pointer"
                     >
                       <CopyPlus size={16} />
@@ -3180,30 +3290,20 @@ function App() {
                   </Tooltip>
                   <Tooltip content="Collapse All">
                     <button
-                      onClick={collapseAll}
+                      onClick={collapseAllModules}
                       className="p-2 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 rounded-lg cursor-pointer"
                     >
                       <CopyMinus size={16} />
                     </button>
                   </Tooltip>
                 </div>
-                <div
-                  className="p-2 overflow-y-scroll"
-                  style={{ height: "calc(100vh - 180px)" }}
-                >
-                  <MemoizedTreeNode
-                    data={treeStructure}
-                    path=""
-                    expandedFolders={expandedFolders}
-                    toggleFolder={toggleFolder}
-                    hiddenPaths={hiddenPaths}
-                    togglePathVisibility={togglePathVisibility}
-                    colorScale={colorScale}
-                    onHoverFile={handleHoverFile}
-                    onHoverFolder={handleHoverFolder}
-                  />
+                <div className="p-2 pb-6 overflow-y-scroll flex-1 min-h-0">
+                  <Tree nodes={treeData} config={treeConfig} />
                 </div>
-              </>
+                <div className="h-[22px] border-t border-neutral-700 flex items-center px-2 text-xs text-neutral-500 shrink-0">
+                  {/* Footer content */}
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -3261,7 +3361,7 @@ function App() {
                 disabled={!supportsFileSystemAccess}
                 className="w-full text-left px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-700 rounded flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
               >
-                <FolderSymlink size={14} />
+                <Folder size={14} />
                 <span>Connect Folder</span>
               </button>
               <input

@@ -11,8 +11,31 @@ export interface ImportData {
   type: "import" | "wildcard" | "re-export" | "dynamic";
 }
 
+export interface Symbol {
+  id: string;
+  name: string;
+  type: "function" | "class" | "variable" | "interface" | "type" | "enum";
+  isExport: boolean;
+  hasUnknownDynamicImport?: boolean;
+}
+
+export interface Module {
+  id: string; // full file path
+  name: string; // last path segment (e.g., "utils" from "src/utils.ts")
+  path: string; // full file path
+  symbols: Symbol[];
+}
+
+export interface Script {
+  id: string; // full file path
+  name: string; // last path segment
+  path: string; // full file path
+  symbols: Symbol[];
+}
+
 export interface ParsedData {
-  files: FileData[];
+  modules: Module[];
+  scripts: Script[];
   imports: ImportData[];
 }
 
@@ -781,9 +804,39 @@ export function buildViewDataFromFiles(files: FileData[]): ViewData {
 
 // New minimal parser - outputs raw files and import relationships
 export function parseFilesMinimal(files: FileData[]): ParsedData {
+  const modules: Module[] = [];
+  const scripts: Script[] = [];
   const imports: ImportData[] = [];
 
   files.forEach((file) => {
+    const symbols = extractSymbolsFromFile(file.content, file.path);
+    const hasExports = symbols.some((s) => s.isExport);
+
+    // Check for empty export statement (export {})
+    const hasEmptyExport = file.content.includes("export {}");
+
+    // Check for import statements (any import makes it a module)
+    const hasImports = /import\s+/.test(file.content);
+
+    const name = file.path.split("/").pop() || file.path;
+
+    // File is a module if it has exports, empty export, or imports
+    if (hasExports || hasEmptyExport || hasImports) {
+      modules.push({
+        id: file.path,
+        name,
+        path: file.path,
+        symbols,
+      });
+    } else {
+      scripts.push({
+        id: file.path,
+        name,
+        path: file.path,
+        symbols,
+      });
+    }
+
     const {
       imports: fileImports,
       wildcardImports,
@@ -850,7 +903,7 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
     });
   });
 
-  return { files, imports };
+  return { modules, scripts, imports };
 }
 
 // Build graph nodes and edges from minimal data format
@@ -860,15 +913,17 @@ export function buildGraphFromMinimal(data: ParsedData): {
 } {
   const nodes: any[] = [];
   const edges: any[] = [];
-  const fileToSymbols = new Map<string, any[]>();
+  const moduleToSymbols = new Map<string, Symbol[]>();
 
-  // Extract symbols from all files
-  data.files.forEach((file) => {
-    const symbols = extractSymbolsFromFile(file.content, file.path);
-    fileToSymbols.set(file.path, symbols);
+  // Combine modules and scripts
+  const allModules = [...data.modules, ...data.scripts];
 
-    symbols.forEach((symbol) => {
-      const pathParts = file.path.split("/");
+  // Extract symbols from all modules
+  allModules.forEach((module) => {
+    moduleToSymbols.set(module.path, module.symbols);
+
+    module.symbols.forEach((symbol) => {
+      const pathParts = module.path.split("/");
       const fileName = pathParts[pathParts.length - 1] || "";
       const folder = pathParts.slice(0, -1).join("/");
 
@@ -891,10 +946,10 @@ export function buildGraphFromMinimal(data: ParsedData): {
   const edgeKeyCount = new Map<string, number>();
 
   data.imports.forEach((importData) => {
-    const sourceSymbols = fileToSymbols.get(importData.source);
+    const sourceSymbols = moduleToSymbols.get(importData.source);
     if (!sourceSymbols) return;
 
-    const targetSymbols = fileToSymbols.get(importData.target);
+    const targetSymbols = moduleToSymbols.get(importData.target);
     if (!targetSymbols) return;
 
     const targetExports = targetSymbols.filter((s) => s.isExport);
@@ -917,8 +972,8 @@ export function buildGraphFromMinimal(data: ParsedData): {
     });
   });
 
-  // Add intra-file edges
-  fileToSymbols.forEach((symbols) => {
+  // Add intra-module edges
+  moduleToSymbols.forEach((symbols) => {
     for (let i = 0; i < symbols.length; i++) {
       for (let j = i + 1; j < symbols.length; j++) {
         const symbol1 = symbols[i];
