@@ -21,6 +21,12 @@ import {
   FileCode2,
   Circle,
   ChevronRight,
+  FunctionSquare,
+  Asterisk,
+  Box,
+  ListOrdered,
+  Cuboid,
+  Layers2,
 } from "lucide-react";
 import "./index.css";
 import {
@@ -610,8 +616,22 @@ function App() {
               <FileCode2 size={16} style={{ color: itemColor }} />
             );
         } else if (data.type === "symbol") {
-          // Symbol node
-          icon = <Circle size={16} style={{ color: itemColor }} />;
+          // Symbol node - use different icons based on symbol type
+          if (data.symbolType === "function") {
+            icon = <FunctionSquare size={16} style={{ color: itemColor }} />;
+          } else if (data.symbolType === "variable") {
+            icon = <Asterisk size={16} style={{ color: itemColor }} />;
+          } else if (data.symbolType === "class") {
+            icon = <Box size={16} style={{ color: itemColor }} />;
+          } else if (data.symbolType === "interface") {
+            icon = <Layers2 size={16} style={{ color: itemColor }} />;
+          } else if (data.symbolType === "type") {
+            icon = <Cuboid size={16} style={{ color: itemColor }} />;
+          } else if (data.symbolType === "enum") {
+            icon = <ListOrdered size={16} style={{ color: itemColor }} />;
+          } else {
+            icon = <Circle size={16} style={{ color: itemColor }} />;
+          }
         }
 
         // Chevron for expandable nodes (path and file)

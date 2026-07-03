@@ -1,19 +1,19 @@
 export function helper() {
-  return 'helper';
+  return "helper";
 }
 
 export function anotherHelper() {
-  return 'another';
+  return "another";
 }
 
 export class HelperClass {
   constructor() {}
   help() {
-    return 'class help';
+    return "class help";
   }
 }
 
-export const helperVar = 'variable';
+export const helperVar = "variable";
 
 export interface HelperInterface {
   name: string;
