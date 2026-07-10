@@ -2598,8 +2598,21 @@ function App() {
           });
         });
 
+        // Deduplicate named import edges: same source file → same target symbol = one line
+        const seenNamedEdges = new Set<string>();
+        const dedupedNamedEdges = namedImportEdges.filter((edge: any) => {
+          const sourceFolder = edge.source.data.folder || "";
+          const sourceKey = sourceFolder
+            ? `${sourceFolder}/${edge.source.data.file}`
+            : edge.source.data.file;
+          const key = `${sourceKey}->${edge.target.id}`;
+          if (seenNamedEdges.has(key)) return false;
+          seenNamedEdges.add(key);
+          return true;
+        });
+
         // Draw named import edges from source file centroid to target symbol node
-        namedImportEdges.forEach((edge: any) => {
+        dedupedNamedEdges.forEach((edge: any) => {
           const sourceFolder = edge.source.data.folder || "";
           const sourceKey = sourceFolder
             ? `${sourceFolder}/${edge.source.data.file}`
