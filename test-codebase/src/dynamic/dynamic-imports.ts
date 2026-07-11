@@ -17,3 +17,8 @@ export async function testDynamicImportVariable(feature: string) {
   const uselessModule = await import(path);
   return uselessModule.uselessValue;
 }
+
+// Test dynamic import without extracting the result
+export async function testDynamicImportUnused() {
+  await import('../base');
+}

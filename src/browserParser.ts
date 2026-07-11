@@ -9,6 +9,7 @@ export interface ImportData {
   source: string;
   target: string;
   type: "import" | "wildcard" | "re-export" | "dynamic";
+  containingFunction?: string;
 }
 
 export interface Symbol {
@@ -898,6 +899,7 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
           source: file.path,
           target: targetPath,
           type: "dynamic",
+          containingFunction: dynamicImport.containingFunction,
         });
       }
     });
@@ -946,13 +948,37 @@ export function buildGraphFromMinimal(data: ParsedData): {
   const edgeKeyCount = new Map<string, number>();
 
   data.imports.forEach((importData) => {
-    const sourceSymbols = moduleToSymbols.get(importData.source);
-    if (!sourceSymbols) return;
-
     const targetSymbols = moduleToSymbols.get(importData.target);
     if (!targetSymbols) return;
 
     const targetExports = targetSymbols.filter((s) => s.isExport);
+
+    // Function-level dynamic import: only connect the containing function
+    if (importData.type === "dynamic" && importData.containingFunction) {
+      const sourceSymbol = (moduleToSymbols.get(importData.source) || []).find(
+        (s) => s.name === importData.containingFunction,
+      );
+      if (!sourceSymbol) return;
+
+      targetExports.forEach((targetSymbol) => {
+        const edgeKey = `${sourceSymbol.id}-${targetSymbol.id}`;
+        if (!edgeKeyCount.has(edgeKey)) {
+          edges.push({
+            id: `e-${edgeKey}`,
+            source: sourceSymbol.id,
+            target: targetSymbol.id,
+            type: importData.type,
+            label: "dynamic import",
+            sourceSymbolType: "function",
+          });
+          edgeKeyCount.set(edgeKey, 1);
+        }
+      });
+      return;
+    }
+
+    const sourceSymbols = moduleToSymbols.get(importData.source);
+    if (!sourceSymbols) return;
 
     sourceSymbols.forEach((sourceSymbol) => {
       targetExports.forEach((targetSymbol) => {

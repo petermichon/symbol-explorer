@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, Fragment } from "react";
 import { createPortal } from "react-dom";
 import * as d3 from "d3";
 import {
@@ -81,16 +81,18 @@ function Tree<T>({
         </div>
         {isExpanded && node.children.length > 0 && (
           <>
-            {node.children.map((child) =>
-              renderTreeNode(child, depth + 1, isHidden),
-            )}
+            {node.children.map((child) => (
+              <Fragment key={child.id}>
+                {renderTreeNode(child, depth + 1, isHidden)}
+              </Fragment>
+            ))}
           </>
         )}
       </>
     );
   }
 
-  return <>{nodes.map((node) => renderTreeNode(node))}</>;
+  return <>{nodes.map((node) => <Fragment key={node.id}>{renderTreeNode(node)}</Fragment>)}</>;
 }
 
 // IndexedDB helper for persisting directory handles
@@ -250,6 +252,7 @@ function App() {
   const selectedNodeRef = useRef<string | null>(null);
   const transformRef = useRef({ x: 0, y: 0, k: 1 });
   const dprRef = useRef(window.devicePixelRatio || 1);
+  const fileLevelEdgesRef = useRef<{ key: string; sx: number; sy: number; tx: number; ty: number; label: string }[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     const saved = localStorage.getItem("sidebarOpen");
     return saved !== null ? JSON.parse(saved) : true;
@@ -2458,12 +2461,40 @@ function App() {
         });
       }
 
+      // Pre-build node id map for O(1) lookups
+      const nodeById = new Map<string, any>();
+      filteredNodes.forEach((n: any) => nodeById.set(n.id, n));
+
+      // Pre-compute hovered edge id set to avoid .some() closures per edge
+      const hoveredEdgeIds = new Set<string>();
+      hoveredEdgesRef.current.forEach((e: any) => {
+        if (e) {
+          if (e.id) hoveredEdgeIds.add(e.id);
+          if (e.source?.id) hoveredEdgeIds.add(e.source.id);
+        }
+      });
+
       // Draw edges
       const hoveredNodes = hoveredNodeRef.current;
       const hoveredNodeId = Array.isArray(hoveredNodes)
         ? hoveredNodes[0]?.id
         : hoveredNodes?.id;
       const selectedNodeId = selectedNodeRef.current;
+
+      // Helper to get file key for a node (matching grouping key format)
+      const getFileKey = (node: any) => {
+        const f = node?.data?.folder || "";
+        const file = node?.data?.file || "";
+        return f ? `${f}/${file}` : file;
+      };
+
+      // File-level hover/selection for grouping mode
+      const hoveredFileKey = hoveredNodeId
+        ? getFileKey(nodeById.get(hoveredNodeId))
+        : null;
+      const selectedFileKey = selectedNodeId
+        ? getFileKey(nodeById.get(selectedNodeId))
+        : null;
 
       // Check if we're in a grouping mode
       const isGroupingMode =
@@ -2557,6 +2588,9 @@ function App() {
           }
         });
 
+        // Build file-level edge lines for hover detection in grouping mode
+        const fileEdgeLines: { key: string; sx: number; sy: number; tx: number; ty: number; label: string }[] = [];
+
         // Draw single edges for file-to-file connections between file centroids
         fileConnections.forEach((targetMap, sourceFile) => {
           const sourceCentroid = fileCentroids.get(sourceFile);
@@ -2580,6 +2614,24 @@ function App() {
             const targetCentroid = fileCentroids.get(targetFile);
             if (!targetCentroid) return;
 
+            const edgeKey = `${sourceFile}||${targetFile}`;
+            fileEdgeLines.push({
+              key: edgeKey,
+              sx: sourceCentroid.x,
+              sy: sourceCentroid.y,
+              tx: targetCentroid.x,
+              ty: targetCentroid.y,
+              label: connection.types.has("wildcard")
+                ? "namespace import"
+                : Array.from(connection.types).join(", "),
+            });
+
+            const isHoveredFile =
+              hoveredFileKey && sourceFile === hoveredFileKey;
+            const isSelectedFile =
+              selectedFileKey && sourceFile === selectedFileKey;
+            const isEdgeHovered = hoveredEdgeIds.has(edgeKey);
+
             // Use line width based on edge count (min 2, max 8)
             const lineWidth = Math.min(
               8,
@@ -2592,7 +2644,8 @@ function App() {
             context.lineTo(targetCentroid.x, targetCentroid.y);
             context.strokeStyle = edgeColor;
             context.lineWidth = isWildcard ? 5 : lineWidth;
-            context.globalAlpha = edgeOpacity;
+            context.globalAlpha =
+              isHoveredFile || isSelectedFile || isEdgeHovered ? 1 : edgeOpacity;
             context.stroke();
             context.globalAlpha = 1;
           });
@@ -2634,6 +2687,9 @@ function App() {
             targetY = sourceCentroid.y + (dy / distance) * (distance - offset);
           }
 
+          const namedKey = `named:${sourceKey}->${edge.target.id}`;
+          fileEdgeLines.push({ key: namedKey, sx: sourceCentroid.x, sy: sourceCentroid.y, tx: targetX, ty: targetY, label: edge.label });
+
           context.beginPath();
           context.moveTo(sourceCentroid.x, sourceCentroid.y);
           context.lineTo(targetX, targetY);
@@ -2642,14 +2698,12 @@ function App() {
           ) as string;
           context.lineWidth = 2;
           const isOutgoingFromHovered =
-            hoveredNodeId && edge.source.id === hoveredNodeId;
+            hoveredFileKey && sourceKey === hoveredFileKey;
           const isOutgoingFromSelected =
-            selectedNodeId && edge.source.id === selectedNodeId;
-          const isHoveredEdge = hoveredEdgesRef.current.some(
-            (e: any) => e.id === edge.id,
-          );
+            selectedFileKey && sourceKey === selectedFileKey;
+          const isEdgeHovered = hoveredEdgeIds.has(namedKey);
           context.globalAlpha =
-            isOutgoingFromHovered || isOutgoingFromSelected || isHoveredEdge
+            isOutgoingFromHovered || isOutgoingFromSelected || isEdgeHovered
               ? 1
               : edgeOpacity;
           context.stroke();
@@ -2686,19 +2740,48 @@ function App() {
             folderMap.get(edge.source.id) || "root",
           ) as string;
           context.lineWidth = 2;
+          const symbolKey = `symbol:${edge.source.id}->${targetKey}`;
+          fileEdgeLines.push({ key: symbolKey, sx: edge.source.x, sy: edge.source.y, tx: targetX, ty: targetY, label: edge.label });
           const isOutgoingFromHovered =
             hoveredNodeId && edge.source.id === hoveredNodeId;
           const isOutgoingFromSelected =
             selectedNodeId && edge.source.id === selectedNodeId;
-          const isHoveredEdge = hoveredEdgesRef.current.some(
-            (e: any) => e.id === edge.id,
-          );
+          const isEdgeHovered = hoveredEdgeIds.has(symbolKey);
           context.globalAlpha =
-            isOutgoingFromHovered || isOutgoingFromSelected || isHoveredEdge
+            isOutgoingFromHovered || isOutgoingFromSelected || isEdgeHovered
               ? 1
               : edgeOpacity;
           context.stroke();
           context.globalAlpha = 1;
+        });
+
+        fileLevelEdgesRef.current = fileEdgeLines;
+
+        // Draw edge labels for hovered file-level edges
+        fileEdgeLines.forEach((flEdge) => {
+          if (flEdge.label && hoveredEdgeIds.has(flEdge.key)) {
+            const midX = (flEdge.sx + flEdge.tx) / 2;
+            const midY = (flEdge.sy + flEdge.ty) / 2;
+
+            context.font =
+              '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            const textWidth = context.measureText(flEdge.label).width;
+            const padding = 6;
+            const rectWidth = textWidth + padding * 2;
+            const rectHeight = 20;
+            const rectX = midX - rectWidth / 2;
+            const rectY = midY - rectHeight / 2;
+
+            context.fillStyle = "rgba(9, 9, 11, 0.5)";
+            context.beginPath();
+            context.roundRect(rectX, rectY, rectWidth, rectHeight, 4);
+            context.fill();
+
+            context.fillStyle = "#fafafa";
+            context.textAlign = "center";
+            context.textBaseline = "middle";
+            context.fillText(flEdge.label, midX, midY);
+          }
         });
 
         // Clip edges inside groups using destination-out compositing
@@ -2746,9 +2829,7 @@ function App() {
             hoveredNodeId && edge.source.id === hoveredNodeId;
           const isOutgoingFromSelected =
             selectedNodeId && edge.source.id === selectedNodeId;
-          const isHoveredEdge = hoveredEdgesRef.current.some(
-            (e: any) => e.id === edge.id,
-          );
+          const isHoveredEdge = hoveredEdgeIds.has(edge.id);
           context.globalAlpha =
             isOutgoingFromHovered || isOutgoingFromSelected || isHoveredEdge
               ? 1
@@ -2765,9 +2846,7 @@ function App() {
         const isHovered = Array.isArray(hoveredNodes)
           ? hoveredNodes.some((n: any) => n.id === node.id)
           : hoveredNodes?.id === node.id;
-        const isEdgeSource = hoveredEdgesRef.current.some(
-          (e: any) => node.id === e.source.id,
-        );
+          const isEdgeSource = hoveredEdgeIds.has(node.id);
         const hasUnknownDynamicImport = node.data.hasUnknownDynamicImport;
 
         context.beginPath();
@@ -2806,10 +2885,7 @@ function App() {
 
       // Draw edge labels (on top of everything)
       filteredEdges.forEach((edge: any) => {
-        const isHoveredEdge = hoveredEdgesRef.current.some(
-          (e: any) => e.id === edge.id,
-        );
-        if (edge.label && isHoveredEdge) {
+        if (edge.label && hoveredEdgeIds.has(edge.id)) {
           const dx = edge.target.x - edge.source.x;
           const dy = edge.target.y - edge.source.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
@@ -2996,9 +3072,22 @@ function App() {
         }
       }
 
-      // Check for edge hover (collect all overlapping edges)
+      // Check for edge hover (only in non-grouping mode — grouping mode draws file-level edges)
       let hoveredEdgesList = [];
-      if (!found) {
+      const isEdgeMode =
+        viewMode !== "circles" &&
+        viewMode !== "boxes" &&
+        viewMode !== "para-fillet" &&
+        viewMode !== "para-bezier" &&
+        viewMode !== "para-subdiv" &&
+        viewMode !== "expand-poly" &&
+        viewMode !== "circle-poly" &&
+        viewMode !== "ellipse-wrap" &&
+        viewMode !== "oriented-rect" &&
+        viewMode !== "oriented-rect-rounded" &&
+        viewMode !== "oriented-rect-roundpoly" &&
+        viewMode !== "oriented-rect-roundpoly2";
+      if (!found && isEdgeMode) {
         for (const edge of filteredEdges) {
           const dx = edge.target.x - edge.source.x;
           const dy = edge.target.y - edge.source.y;
@@ -3022,6 +3111,32 @@ function App() {
 
           if (distToLine < 5) {
             hoveredEdgesList.push(edge);
+          }
+        }
+      } else if (!found && !isEdgeMode) {
+        // Grouping mode: check proximity to file-level centroid-to-centroid edges
+        for (const flEdge of fileLevelEdgesRef.current) {
+          const dx = flEdge.tx - flEdge.sx;
+          const dy = flEdge.ty - flEdge.sy;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance === 0) continue;
+
+          const t = Math.max(
+            0,
+            Math.min(
+              1,
+              ((mouseX - flEdge.sx) * dx + (mouseY - flEdge.sy) * dy) /
+                (distance * distance),
+            ),
+          );
+          const projX = flEdge.sx + t * dx;
+          const projY = flEdge.sy + t * dy;
+          const distToLine = Math.sqrt(
+            (mouseX - projX) ** 2 + (mouseY - projY) ** 2,
+          );
+
+          if (distToLine < 5) {
+            hoveredEdgesList.push({ id: flEdge.key });
           }
         }
       }
