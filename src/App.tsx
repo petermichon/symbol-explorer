@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Settings,
   Folder,
+  FolderGit2,
   FolderOpen,
   X,
   FileBox,
@@ -247,6 +248,7 @@ function App() {
   const simulationRef = useRef<any>(null);
   const drawRef = useRef<(() => void) | null>(null);
   const hoveredNodeRef = useRef<any>(null);
+  const hoverFromTreeRef = useRef(false);
   const mousePositionRef = useRef({ x: 0, y: 0 });
   const mouseOverCanvasRef = useRef(false);
   const selectedNodeRef = useRef<string | null>(null);
@@ -270,6 +272,10 @@ function App() {
     const saved = localStorage.getItem("hiddenPaths");
     return saved !== null ? new Set(JSON.parse(saved)) : new Set();
   });
+  const [hiddenSymbols, setHiddenSymbols] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem("hiddenSymbols");
+    return saved !== null ? new Set(JSON.parse(saved)) : new Set();
+  });
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredEdges, setHoveredEdges] = useState<any[]>([]);
   const hoveredEdgesRef = useRef<any[]>([]);
@@ -284,7 +290,7 @@ function App() {
   const forcesEnabledRef = useRef(false);
   const [chargeStrength, setChargeStrength] = useState(() => {
     const saved = localStorage.getItem("chargeStrength");
-    return saved !== null ? JSON.parse(saved) : -100;
+    return saved !== null ? JSON.parse(saved) : -1000;
   });
   const [linkDistance, setLinkDistance] = useState(() => {
     const saved = localStorage.getItem("linkDistance");
@@ -298,6 +304,8 @@ function App() {
     const saved = localStorage.getItem("edgeOpacity");
     return saved !== null ? JSON.parse(saved) : 0.5;
   });
+  const [groupCohesionStrength, setGroupCohesionStrength] = useState(1);
+  const [crossFileEdgeStrength, setCrossFileEdgeStrength] = useState(0.3);
   const [viewMode, setViewMode] = useState<
     | "edges"
     | "circles"
@@ -313,6 +321,100 @@ function App() {
     | "oriented-rect-roundpoly"
     | "oriented-rect-roundpoly2"
   >("oriented-rect-roundpoly");
+
+  function groupCohesionForce(strength: number) {
+    let nodes: any[];
+    function force(alpha: number) {
+      const groups = new Map<string, any[]>();
+      nodes.forEach((node: any) => {
+        const file = node.data?.file;
+        const folder = node.data?.folder || "";
+        if (!file) return;
+        const key = folder ? `${folder}/${file}` : file;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(node);
+      });
+      const groupBounds = new Map<string, { cx: number; cy: number; radius: number }>();
+      groups.forEach((groupNodes, key) => {
+        const cx = groupNodes.reduce((s, n) => s + n.x, 0) / groupNodes.length;
+        const cy = groupNodes.reduce((s, n) => s + n.y, 0) / groupNodes.length;
+        const maxDist = Math.max(...groupNodes.map((n: any) => Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2))) || 1;
+        const groupRadius = maxDist + 15;
+        groupBounds.set(key, { cx, cy, radius: groupRadius });
+        groupNodes.forEach((node: any) => {
+          const dx = node.x - cx;
+          const dy = node.y - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const boundary = groupRadius - 15;
+          if (dist > boundary) {
+            const overlap = dist - boundary;
+            node.vx -= (dx / dist) * overlap * strength * alpha;
+            node.vy -= (dy / dist) * overlap * strength * alpha;
+          }
+        });
+      });
+      const keys = Array.from(groupBounds.keys());
+      for (let i = 0; i < keys.length; i++) {
+        for (let j = i + 1; j < keys.length; j++) {
+          const a = groupBounds.get(keys[i])!;
+          const b = groupBounds.get(keys[j])!;
+          const dx = b.cx - a.cx;
+          const dy = b.cy - a.cy;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const minDist = a.radius + b.radius;
+          if (dist < minDist) {
+            const overlap = minDist - dist;
+            const pushX = (dx / dist) * overlap * strength * alpha;
+            const pushY = (dy / dist) * overlap * strength * alpha;
+            const groupA = groups.get(keys[i])!;
+            const groupB = groups.get(keys[j])!;
+            groupA.forEach((n: any) => { n.vx -= pushX; n.vy -= pushY; });
+            groupB.forEach((n: any) => { n.vx += pushX; n.vy += pushY; });
+          }
+        }
+      }
+    }
+    force.initialize = (n: any[]) => { nodes = n; };
+    return force;
+  }
+
+  function crossFileEdgeForce(edges: any[], strength: number) {
+    let nodeMap: Map<string, any>;
+    function force(alpha: number) {
+      edges.forEach((edge: any) => {
+        const source = typeof edge.source === "string" ? nodeMap.get(edge.source) : edge.source;
+        const target = typeof edge.target === "string" ? nodeMap.get(edge.target) : edge.target;
+        if (!source || !target) return;
+
+        const sourceFile = source.data?.file;
+        const sourceFolder = source.data?.folder || "";
+        const targetFile = target.data?.file;
+        const targetFolder = target.data?.folder || "";
+        if (!sourceFile || !targetFile) return;
+
+        const sourceKey = sourceFolder ? `${sourceFolder}/${sourceFile}` : sourceFile;
+        const targetKey = targetFolder ? `${targetFolder}/${targetFile}` : targetFile;
+        if (sourceKey === targetKey) return;
+
+        const dx = target.x - source.x;
+        const dy = target.y - source.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const targetDist = 30;
+        const f = (dist - targetDist) * strength * alpha;
+
+        source.vx += (dx / dist) * f;
+        source.vy += (dy / dist) * f;
+        target.vx -= (dx / dist) * f;
+        target.vy -= (dy / dist) * f;
+      });
+    }
+    force.initialize = (n: any[]) => {
+      nodeMap = new Map();
+      n.forEach((node: any) => nodeMap.set(node.id, node));
+    };
+    return force;
+  }
+
   const [customData, setCustomData] = useState<{
     nodes: any[];
     edges: any[];
@@ -333,13 +435,18 @@ function App() {
     [customData],
   );
 
-  // Filter nodes and edges based on hidden folders and files
+  // Filter nodes and edges based on hidden folders, files, and symbols
   const { filteredNodes, filteredEdges } = useMemo(() => {
     const hiddenSet = hiddenPaths;
 
     const visibleNodes = generatedNodes.filter((node: any) => {
       const folder = node.data.folder || "root";
       const file = node.data.file || "";
+
+      // Check if this specific symbol is hidden
+      if (hiddenSymbols.has(node.id)) {
+        return false;
+      }
 
       // Check if this folder or any parent folder is hidden
       const folderParts = folder.split("/");
@@ -351,7 +458,8 @@ function App() {
       }
 
       // Check if this specific file is hidden
-      const filePath = file ? `${folder}/${file}` : folder;
+      const rawFolder = node.data.folder || "";
+      const filePath = file ? (rawFolder ? `${rawFolder}/${file}` : file) : rawFolder;
       const filePathWithoutExt = filePath.replace(".ts", "");
       if (hiddenSet.has(filePathWithoutExt)) {
         return false;
@@ -372,20 +480,47 @@ function App() {
     });
 
     return { filteredNodes: visibleNodes, filteredEdges: visibleEdges };
-  }, [generatedNodes, generatedEdges, hiddenPaths]);
+  }, [generatedNodes, generatedEdges, hiddenPaths, hiddenSymbols]);
 
-  const handleHoverFile = useCallback(
-    (filePath: string | null) => {
-      // Update hovered nodes to include all nodes from this file
-      if (filePath === null) {
+  const handleHoverPath = useCallback(
+    (path: string | null, isFolder: boolean = false) => {
+      hoverFromTreeRef.current = path !== null;
+      if (path === null) {
         hoveredNodeRef.current = null;
+      } else if (isFolder) {
+        const nodesInFolder = filteredNodes.filter((n: any) => {
+          const folder = n.data.folder || "";
+          return folder === path || folder.startsWith(path + "/");
+        });
+        hoveredNodeRef.current = nodesInFolder.length > 0 ? nodesInFolder : null;
       } else {
         const nodesInFile = filteredNodes.filter((n: any) => {
           const lastDotIndex = n.id.lastIndexOf(".");
           const nodeFilePath = n.id.substring(0, lastDotIndex);
-          return nodeFilePath === filePath;
+          return nodeFilePath === path;
         });
         hoveredNodeRef.current = nodesInFile.length > 0 ? nodesInFile : null;
+      }
+      if (drawRef.current) {
+        drawRef.current();
+      }
+    },
+    [filteredNodes],
+  );
+
+  const handleHoverSymbol = useCallback(
+    (symbolName: string | null, modulePath?: string) => {
+      hoverFromTreeRef.current = symbolName !== null;
+      if (symbolName === null || !modulePath) {
+        hoveredNodeRef.current = null;
+      } else {
+        const node = filteredNodes.find((n: any) => {
+          const nodeFilePath = n.data.folder
+            ? `${n.data.folder}/${n.data.file}`
+            : n.data.file;
+          return n.data.label === symbolName && nodeFilePath === modulePath;
+        });
+        hoveredNodeRef.current = node || null;
       }
       if (drawRef.current) {
         drawRef.current();
@@ -520,12 +655,28 @@ function App() {
     if (!path) return;
     setHiddenPaths((prev: Set<string>) => {
       const next = new Set(prev);
-      // Remove .ts extension for consistency with tree paths
       const normalizedPath = path.replace(".ts", "");
       if (next.has(normalizedPath)) {
         next.delete(normalizedPath);
       } else {
         next.add(normalizedPath);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSymbolVisibility = useCallback((modulePath: string, symbolName: string) => {
+    const pathParts = modulePath.split("/");
+    const fileName = pathParts[pathParts.length - 1];
+    const folder = pathParts.slice(0, -1).join("/");
+    const graphNodeId = folder ? `${folder}/${fileName}.${symbolName}` : `${fileName}.${symbolName}`;
+
+    setHiddenSymbols((prev: Set<string>) => {
+      const next = new Set(prev);
+      if (next.has(graphNodeId)) {
+        next.delete(graphNodeId);
+      } else {
+        next.add(graphNodeId);
       }
       return next;
     });
@@ -574,6 +725,7 @@ function App() {
 
   const showAll = useCallback(() => {
     setHiddenPaths(new Set());
+    setHiddenSymbols(new Set());
   }, []);
 
   const hideAll = useCallback(() => {
@@ -590,7 +742,16 @@ function App() {
   const treeConfig = useMemo<TreeConfig<any>>(
     () => ({
       renderNode: (node) => {
-        const { data, isExpanded, isHidden } = node;
+        const { data, isExpanded } = node;
+        const isHidden = data.type === "symbol"
+          ? (() => {
+              const pathParts = (data.modulePath || "").split("/");
+              const fileName = pathParts[pathParts.length - 1];
+              const folder = pathParts.slice(0, -1).join("/");
+              const graphNodeId = folder ? `${folder}/${fileName}.${data.name}` : `${fileName}.${data.name}`;
+              return hiddenSymbols.has(graphNodeId);
+            })()
+          : node.isHidden;
         // Extract path for coloring
         const fullPath = data.path || data.modulePath || "root";
         // For path nodes (folders), use their own path for coloring
@@ -674,26 +835,24 @@ function App() {
             }}
             onHover={() => {
               if (data.type === "symbol") {
-                // Hover the specific symbol node
-                setSelectedNodeId(node.id);
+                handleHoverSymbol(data.name, data.modulePath);
               } else {
-                // Hover all nodes from the file
-                handleHoverFile(data.type === "file" ? data.path : null);
+                handleHoverPath(data.path, data.type === "path");
               }
             }}
             onLeave={() => {
               if (data.type === "symbol") {
-                setSelectedNodeId(null);
+                handleHoverSymbol(null);
               } else {
-                handleHoverFile(null);
+                handleHoverPath(null);
               }
             }}
             onToggleVisibility={
-              data.type === "path" ||
-              data.type === "file" ||
-              data.type === "symbol"
-                ? () => togglePathVisibility(data.path || data.modulePath)
-                : undefined
+              data.type === "path" || data.type === "file"
+                ? () => togglePathVisibility(data.path)
+                : data.type === "symbol"
+                  ? () => toggleSymbolVisibility(data.modulePath, data.name)
+                  : undefined
             }
             chevron={chevron}
           />
@@ -705,10 +864,12 @@ function App() {
     [
       colorScale,
       toggleModule,
-      handleHoverFile,
+      handleHoverPath,
       togglePathVisibility,
+      toggleSymbolVisibility,
       expandedModules,
       hiddenPaths,
+      hiddenSymbols,
       handleSelectSymbol,
     ],
   );
@@ -1168,19 +1329,28 @@ function App() {
 
     canvas.addEventListener("wheel", handleWheel);
 
+    const isGroupingMode = viewMode !== "edges";
+
     const simulation = d3
       .forceSimulation(filteredNodes as any)
-      .force(
+      .force("charge", d3.forceManyBody().strength(chargeStrength))
+      .force("x", d3.forceX(0))
+      .force("y", d3.forceY(0))
+      .alphaDecay(forcesEnabled ? 0 : alphaDecayValue);
+
+    if (isGroupingMode) {
+      simulation.force("group", groupCohesionForce(groupCohesionStrength));
+      simulation.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength));
+      simulation.force("collide", d3.forceCollide(15));
+    } else {
+      simulation.force(
         "link",
         d3
           .forceLink(filteredEdges as any)
           .id((d: any) => d.id)
           .distance(linkDistance),
-      )
-      .force("charge", d3.forceManyBody().strength(chargeStrength))
-      .force("x", d3.forceX(0))
-      .force("y", d3.forceY(0))
-      .alphaDecay(forcesEnabled ? 0 : alphaDecayValue);
+      );
+    }
 
     simulationRef.current = simulation;
 
@@ -2535,6 +2705,18 @@ function App() {
           });
         });
 
+        // Resolve edge source/target from string IDs to node objects
+        const nodeMap = new Map<string, any>();
+        filteredNodes.forEach((node: any) => nodeMap.set(node.id, node));
+
+        const resolvedEdges = filteredEdges
+          .map((edge: any) => ({
+            ...edge,
+            source: typeof edge.source === "string" ? nodeMap.get(edge.source) : edge.source,
+            target: typeof edge.target === "string" ? nodeMap.get(edge.target) : edge.target,
+          }))
+          .filter((edge: any) => edge.source && edge.target);
+
         // Separate edge types for polygon view:
         // - Wildcard imports: source file centroid -> target file centroid
         // - Named imports: source file centroid -> target symbol node
@@ -2547,7 +2729,7 @@ function App() {
         const symbolLevelEdges: any[] = []; // source symbol -> target file
         const processedEdges = new Set<string>();
 
-        filteredEdges.forEach((edge: any) => {
+        resolvedEdges.forEach((edge: any) => {
           // Skip intra-file edges in grouping modes
           const sourceFolder = edge.source.data.folder || "";
           const targetFolder = edge.target.data.folder || "";
@@ -2839,6 +3021,39 @@ function App() {
         });
       }
 
+      // Draw collision and group bounding circles in polygon view
+      if (viewMode !== "edges") {
+        filteredNodes.forEach((node: any) => {
+          context.beginPath();
+          context.arc(node.x, node.y, 15, 0, 2 * Math.PI);
+          context.strokeStyle = "rgba(255, 0, 0, 0.4)";
+          context.lineWidth = 1;
+          context.stroke();
+        });
+        const drawGroups = new Map<string, any[]>();
+        filteredNodes.forEach((node: any) => {
+          const file = node.data?.file;
+          const folder = node.data?.folder || "";
+          if (!file) return;
+          const key = folder ? `${folder}/${file}` : file;
+          if (!drawGroups.has(key)) drawGroups.set(key, []);
+          drawGroups.get(key)!.push(node);
+        });
+        drawGroups.forEach((groupNodes) => {
+          if (groupNodes.length === 0) return;
+          const cx = groupNodes.reduce((s: number, n: any) => s + n.x, 0) / groupNodes.length;
+          const cy = groupNodes.reduce((s: number, n: any) => s + n.y, 0) / groupNodes.length;
+          const maxDist = Math.max(...groupNodes.map((n: any) => Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2))) || 1;
+          context.beginPath();
+          context.arc(cx, cy, maxDist + 15, 0, 2 * Math.PI);
+          context.strokeStyle = "rgba(0, 255, 0, 0.3)";
+          context.lineWidth = 1;
+          context.setLineDash([4, 4]);
+          context.stroke();
+          context.setLineDash([]);
+        });
+      }
+
       // Draw nodes
       filteredNodes.forEach((node: any) => {
         const isSelected = node.id === selectedNodeRef.current;
@@ -2975,11 +3190,12 @@ function App() {
         }
       }
 
-      // Draw hover label (shows if hovering and different from selected)
+      // Draw hover label (shows if hovering directly on canvas and different from selected)
       if (
         hoveredNodeRef.current &&
         !Array.isArray(hoveredNodeRef.current) &&
-        hoveredNodeRef.current.id !== selectedNodeRef.current
+        hoveredNodeRef.current.id !== selectedNodeRef.current &&
+        !hoverFromTreeRef.current
       ) {
         const lastDotIndex = hoveredNodeRef.current.id.lastIndexOf(".");
         const pathPart = hoveredNodeRef.current.id.substring(0, lastDotIndex);
@@ -3142,6 +3358,7 @@ function App() {
       }
 
       if (found !== hoveredNodeRef.current) {
+        hoverFromTreeRef.current = false;
         hoveredNodeRef.current = found;
         canvas.style.cursor = found
           ? "pointer"
@@ -3329,14 +3546,86 @@ function App() {
     localStorage.setItem("edgeOpacity", JSON.stringify(edgeOpacity));
   }, [edgeOpacity]);
 
+  useEffect(() => {
+    localStorage.setItem("groupCohesionStrength", JSON.stringify(groupCohesionStrength));
+  }, [groupCohesionStrength]);
+
+  useEffect(() => {
+    localStorage.setItem("crossFileEdgeStrength", JSON.stringify(crossFileEdgeStrength));
+  }, [crossFileEdgeStrength]);
+
   // Update simulation forces when D3 parameters change
   useEffect(() => {
     if (simulationRef.current) {
       simulationRef.current.force("charge").strength(chargeStrength);
-      simulationRef.current.force("link").distance(linkDistance);
+      const linkForce = simulationRef.current.force("link");
+      if (linkForce) {
+        (linkForce as any).distance(linkDistance);
+      }
       simulationRef.current.alpha(0.3).restart();
     }
   }, [chargeStrength, linkDistance]);
+
+  // Update group cohesion strength when parameter changes
+  useEffect(() => {
+    if (simulationRef.current) {
+      const existingGroup = simulationRef.current.force("group");
+      if (existingGroup) {
+        simulationRef.current.force("group", null);
+        simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength));
+        simulationRef.current.alpha(1).restart();
+      }
+    }
+  }, [groupCohesionStrength]);
+
+  // Update cross-file edge strength when parameter changes
+  useEffect(() => {
+    if (simulationRef.current) {
+      const existingCrossFile = simulationRef.current.force("crossFile");
+      if (existingCrossFile) {
+        simulationRef.current.force("crossFile", null);
+        simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength));
+        simulationRef.current.alpha(1).restart();
+      }
+    }
+  }, [crossFileEdgeStrength, filteredEdges]);
+
+  // Update simulation forces when view mode changes
+  useEffect(() => {
+    if (simulationRef.current) {
+      const isGroupingMode = viewMode !== "edges";
+      const existingLink = simulationRef.current.force("link");
+      const existingGroup = simulationRef.current.force("group");
+      const existingCrossFile = simulationRef.current.force("crossFile");
+      const existingCollide = simulationRef.current.force("collide");
+      if (isGroupingMode) {
+        if (existingLink) simulationRef.current.force("link", null);
+        if (!existingGroup) {
+          simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength));
+        }
+        if (!existingCrossFile) {
+          simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength));
+        }
+        if (!existingCollide) {
+          simulationRef.current.force("collide", d3.forceCollide(15));
+        }
+      } else {
+        if (existingGroup) simulationRef.current.force("group", null);
+        if (existingCrossFile) simulationRef.current.force("crossFile", null);
+        if (existingCollide) simulationRef.current.force("collide", null);
+        if (!existingLink) {
+          simulationRef.current.force(
+            "link",
+            d3
+              .forceLink(filteredEdges as any)
+              .id((d: any) => d.id)
+              .distance(linkDistance),
+          );
+        }
+      }
+      simulationRef.current.alpha(1).restart();
+    }
+  }, [viewMode, filteredEdges, linkDistance, groupCohesionStrength, crossFileEdgeStrength]);
 
   // Update alpha decay when parameter changes
   useEffect(() => {
@@ -3362,10 +3651,22 @@ function App() {
   useEffect(() => {
     if (simulationRef.current && filteredNodes.length > 0) {
       simulationRef.current.nodes(filteredNodes as any);
-      simulationRef.current.force("link").links(filteredEdges as any);
+      const linkForce = simulationRef.current.force("link");
+      if (linkForce) {
+        (linkForce as any).links(filteredEdges as any);
+      }
+      const isGroupingMode = viewMode !== "edges";
+      if (isGroupingMode) {
+        simulationRef.current.force("group", null);
+        simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength));
+        simulationRef.current.force("crossFile", null);
+        simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength));
+        simulationRef.current.force("collide", null);
+        simulationRef.current.force("collide", d3.forceCollide(15));
+      }
       simulationRef.current.alpha(1).restart();
     }
-  }, [filteredNodes, filteredEdges]);
+  }, [filteredNodes, filteredEdges, groupCohesionStrength, crossFileEdgeStrength, viewMode]);
 
   return (
     <div className="h-screen w-screen bg-neutral-900 flex">
@@ -3509,7 +3810,7 @@ function App() {
                 disabled={!supportsFileSystemAccess}
                 className="w-full text-left px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-700 rounded flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
               >
-                <Folder size={14} />
+                <FolderGit2 size={14} />
                 <span>Connect Folder</span>
               </button>
               <input
@@ -3773,6 +4074,34 @@ function App() {
               max="1"
               value={edgeOpacity}
               onChange={(e) => setEdgeOpacity(Number(e.target.value))}
+              className="w-full bg-neutral-800 text-neutral-50 rounded px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-400 mb-2">
+              Group Cohesion
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              value={groupCohesionStrength}
+              onChange={(e) => setGroupCohesionStrength(Number(e.target.value))}
+              className="w-full bg-neutral-800 text-neutral-50 rounded px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-400 mb-2">
+              Cross-File Edge Strength
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              value={crossFileEdgeStrength}
+              onChange={(e) => setCrossFileEdgeStrength(Number(e.target.value))}
               className="w-full bg-neutral-800 text-neutral-50 rounded px-3 py-2 text-sm"
             />
           </div>
