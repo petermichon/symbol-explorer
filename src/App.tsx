@@ -246,6 +246,8 @@ function App() {
   const resizeRef = useRef<(() => void) | null>(null);
   const sidebarOpenRef = useRef(false);
   const simulationRef = useRef<any>(null);
+  const polyBlocksDataRef = useRef<any[] | null>(null);
+  const polyBlocksRectsRef = useRef<{ treemapSize: number; rects: Map<string, { x0: number; y0: number; x1: number; y1: number }> }>({ treemapSize: 0, rects: new Map() });
   const drawRef = useRef<(() => void) | null>(null);
   const hoveredNodeRef = useRef<any>(null);
   const hoverFromTreeRef = useRef(false);
@@ -323,7 +325,8 @@ function App() {
     | "oriented-rect-roundpoly"
     | "oriented-rect-roundpoly2"
     | "poly-solid"
-  >("oriented-rect-roundpoly");
+    | "poly-blocks"
+  >("poly-blocks");
 
   function groupCohesionForce(strength: number, colStrength: number, repelStrength: number, legacy: boolean) {
     let nodes: any[];
@@ -799,6 +802,385 @@ function App() {
       n.forEach((node: any) => nodeMap.set(node.id, node));
     };
     return force;
+  }
+
+  function twoLevelLayoutForce(edges: any[], params: { groupStrength: number; crossFileStrength: number; collisionStrength: number; repelStrength: number }, gridSnapSpacing = 0) {
+    let nodes: any[];
+    let groupInfo: Map<string, { cx: number; cy: number; radius: number; members: any[] }> | null = null;
+
+    function getGroupKey(node: any): string {
+      const file = node.data?.file;
+      const folder = node.data?.folder || "";
+      return file ? (folder ? `${folder}/${file}` : file) : "";
+    }
+
+    function force(alpha: number) {
+      if (!groupInfo) return;
+      if (gridSnapSpacing > 0) return;
+
+      const nodeMap = new Map(nodes.map((n: any) => [n.id, n]));
+
+      // --- 1. Update group centroids from current symbol positions ---
+      groupInfo.forEach(g => {
+        if (g.members.length === 0) return;
+        g.cx = g.members.reduce((s: number, n: any) => s + n.x, 0) / g.members.length;
+        g.cy = g.members.reduce((s: number, n: any) => s + n.y, 0) / g.members.length;
+      });
+
+      // --- 2. Cross-file edge forces (group-to-group spring) ---
+      if (params.crossFileStrength > 0 && gridSnapSpacing === 0) {
+        const groupSpringForces = new Map<string, { fx: number; fy: number }>();
+        edges.forEach((e: any) => {
+          const sourceId = typeof e.source === 'string' ? e.source : e.source.id;
+          const targetId = typeof e.target === 'string' ? e.target : e.target.id;
+          const sn = nodeMap.get(sourceId);
+          const tn = nodeMap.get(targetId);
+          if (!sn || !tn) return;
+          const sk = getGroupKey(sn);
+          const tk = getGroupKey(tn);
+          if (!sk || !tk || sk === tk) return;
+          const sg = groupInfo!.get(sk);
+          const tg = groupInfo!.get(tk);
+          if (!sg || !tg) return;
+          const dx = tg.cx - sg.cx;
+          const dy = tg.cy - sg.cy;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const ideal = sg.radius + tg.radius + 10;
+          const k = (dist - ideal) * 0.03 * params.crossFileStrength * alpha;
+          const pfx = (dx / dist) * k;
+          const pfy = (dy / dist) * k;
+          if (!groupSpringForces.has(sk)) groupSpringForces.set(sk, { fx: 0, fy: 0 });
+          if (!groupSpringForces.has(tk)) groupSpringForces.set(tk, { fx: 0, fy: 0 });
+          const sf = groupSpringForces.get(sk)!;
+          const tf = groupSpringForces.get(tk)!;
+          sf.fx += pfx; sf.fy += pfy;
+          tf.fx -= pfx; tf.fy -= pfy;
+        });
+        groupSpringForces.forEach((f, key) => {
+          const g = groupInfo!.get(key);
+          if (!g || g.members.length === 0) return;
+          g.members.forEach((n: any) => {
+            n.vx += f.fx / g.members.length;
+            n.vy += f.fy / g.members.length;
+          });
+        });
+      }
+
+      // --- 3. Group separation (container packing) ---
+      const groups = Array.from(groupInfo.values());
+      for (let i = 0; i < groups.length; i++) {
+        for (let j = i + 1; j < groups.length; j++) {
+          const a = groups[i], b = groups[j];
+          const dx = b.cx - a.cx;
+          const dy = b.cy - a.cy;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const minDist = a.radius + b.radius + 10;
+          if (dist < minDist) {
+            const overlap = minDist - dist;
+            const k = params.collisionStrength * alpha * 0.5;
+            const px = (dx / dist) * overlap * k;
+            const py = (dy / dist) * overlap * k;
+            a.members.forEach((n: any) => { n.vx -= px / a.members.length; n.vy -= py / a.members.length; });
+            b.members.forEach((n: any) => { n.vx += px / b.members.length; n.vy += py / b.members.length; });
+          }
+        }
+      }
+
+      // --- 4. Boundary enforcement + gentle centering (skipped when grid snap active) ---
+      if (gridSnapSpacing === 0) {
+        groupInfo.forEach(g => {
+          const gk = params.groupStrength * alpha;
+          g.members.forEach((n: any) => {
+            const dx = n.x - g.cx;
+            const dy = n.y - g.cy;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            if (dist > g.radius) {
+              const overlap = dist - g.radius;
+              const f = overlap * 0.3 * gk;
+              n.vx -= (dx / dist) * f;
+              n.vy -= (dy / dist) * f;
+            }
+            n.vx -= dx * 0.002 * alpha;
+            n.vy -= dy * 0.002 * alpha;
+          });
+        });
+      }
+
+      // --- 5. Intra-group node collision (skipped when grid snap active — grid handles spacing) ---
+      if (gridSnapSpacing === 0) {
+        groupInfo.forEach(g => {
+          for (let i = 0; i < g.members.length; i++) {
+            for (let j = i + 1; j < g.members.length; j++) {
+              const a = g.members[i], b = g.members[j];
+              const dx = a.x - b.x;
+              const dy = a.y - b.y;
+              const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+              const minDist = 15;
+              if (dist < minDist) {
+                const f = (minDist - dist) * 0.08 * alpha;
+                a.vx += (dx / dist) * f;
+                a.vy += (dy / dist) * f;
+                b.vx -= (dx / dist) * f;
+                b.vy -= (dy / dist) * f;
+              }
+            }
+          }
+        });
+      }
+
+      // --- 6. Intra-file edge springs (skipped when grid snap active) ---
+      if (gridSnapSpacing === 0) {
+        edges.forEach((e: any) => {
+          const source = typeof e.source === 'string' ? nodeMap.get(e.source) : e.source;
+          const target = typeof e.target === 'string' ? nodeMap.get(e.target) : e.target;
+          if (!source || !target) return;
+          const sk = getGroupKey(source);
+          const tk = getGroupKey(target);
+          if (sk !== tk || !sk) return;
+          const dx = target.x - source.x;
+          const dy = target.y - source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const f = (dist - 25) * 0.03 * alpha;
+          source.vx += (dx / dist) * f;
+          source.vy += (dy / dist) * f;
+          target.vx -= (dx / dist) * f;
+          target.vy -= (dy / dist) * f;
+        });
+      }
+
+      // --- 7. Inter-group symbol repulsion ---
+      if (params.repelStrength > 0 && nodes.length < 400) {
+        const allMembers = Array.from(groupInfo.values()).flatMap(g => g.members);
+        const scale = gridSnapSpacing > 0 ? 0.3 : 1;
+        for (let i = 0; i < allMembers.length; i++) {
+          const a = allMembers[i];
+          const aKey = getGroupKey(a);
+          for (let j = i + 1; j < allMembers.length; j++) {
+            const b = allMembers[j];
+            if (getGroupKey(b) === aKey) continue;
+            const dx = a.x - b.x, dy = a.y - b.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const f = params.repelStrength / (dist * dist) * scale;
+            a.vx += (dx / dist) * f * alpha;
+            a.vy += (dy / dist) * f * alpha;
+            b.vx -= (dx / dist) * f * alpha;
+            b.vy -= (dy / dist) * f * alpha;
+          }
+        }
+      }
+    }
+
+    force.initialize = (n: any[]) => {
+      nodes = n;
+      const groups = new Map<string, any[]>();
+      nodes.forEach((n: any) => {
+        const key = getGroupKey(n);
+        if (key) {
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key)!.push(n);
+        }
+      });
+
+      const rootData: any = { id: "root", children: [] };
+      groups.forEach((members, key) => {
+        rootData.children.push({ id: key, value: members.length });
+      });
+
+      if (rootData.children.length === 0) {
+        groupInfo = new Map();
+        return;
+      }
+
+      try {
+        const root = d3.hierarchy(rootData).sum(d => d.value);
+        const packSize = 400;
+        d3.pack<any>().size([packSize, packSize]).padding(15)(root);
+
+        groupInfo = new Map();
+        root.children?.forEach((child: any) => {
+          const key = child.data.id;
+          const members = groups.get(key) || [];
+          const minR = gridSnapSpacing > 0 ? Math.sqrt(members.length * gridSnapSpacing * gridSnapSpacing / Math.PI) + gridSnapSpacing : 0;
+          const r = Math.max(child.r - 5, 15, minR);
+          const cx = (child.x ?? 0) - packSize / 2;
+          const cy = (child.y ?? 0) - packSize / 2;
+          groupInfo!.set(key, { cx, cy, radius: r, members });
+          if (gridSnapSpacing > 0) {
+            const usedSlots = new Set<string>();
+            const candidates: [number, number][] = [];
+            const searchR = r + gridSnapSpacing;
+            const minX = Math.floor((cx - searchR) / gridSnapSpacing) * gridSnapSpacing;
+            const maxX = Math.ceil((cx + searchR) / gridSnapSpacing) * gridSnapSpacing;
+            const minY = Math.floor((cy - searchR) / gridSnapSpacing) * gridSnapSpacing;
+            const maxY = Math.ceil((cy + searchR) / gridSnapSpacing) * gridSnapSpacing;
+            for (let x = minX; x <= maxX; x += gridSnapSpacing) {
+              for (let y = minY; y <= maxY; y += gridSnapSpacing) {
+                candidates.push([x, y]);
+              }
+            }
+            candidates.sort((a, b) => (a[0] - cx) ** 2 + (a[1] - cy) ** 2 - (b[0] - cx) ** 2 - (b[1] - cy) ** 2);
+            members.forEach((n: any) => {
+              const slot = candidates.find(([x, y]) => !usedSlots.has(`${x},${y}`));
+              if (slot) {
+                usedSlots.add(`${slot[0]},${slot[1]}`);
+                n.x = slot[0]; n.y = slot[1];
+              } else {
+                n.x = cx; n.y = cy;
+              }
+              n.vx = 0;
+              n.vy = 0;
+            });
+          } else {
+            members.forEach((n: any) => {
+              const angle = Math.random() * 2 * Math.PI;
+              const dist = Math.random() * r * 0.7;
+              n.x = cx + Math.cos(angle) * dist;
+              n.y = cy + Math.sin(angle) * dist;
+              n.vx = 0;
+              n.vy = 0;
+            });
+          }
+        });
+      } catch {
+        groupInfo = new Map();
+        groups.forEach((members, key) => {
+          const minR = gridSnapSpacing > 0 ? Math.sqrt(members.length * gridSnapSpacing * gridSnapSpacing / Math.PI) + gridSnapSpacing : 0;
+          const r = Math.max(15, 5 + members.length * 5, minR);
+          const gcx = 0; const gcy = 0;
+          groupInfo!.set(key, { cx: gcx, cy: gcy, radius: r, members });
+          if (gridSnapSpacing > 0) {
+            const usedSlots = new Set<string>();
+            const candidates: [number, number][] = [];
+            const searchR = r + gridSnapSpacing;
+            const minX = Math.floor((gcx - searchR) / gridSnapSpacing) * gridSnapSpacing;
+            const maxX = Math.ceil((gcx + searchR) / gridSnapSpacing) * gridSnapSpacing;
+            const minY = Math.floor((gcy - searchR) / gridSnapSpacing) * gridSnapSpacing;
+            const maxY = Math.ceil((gcy + searchR) / gridSnapSpacing) * gridSnapSpacing;
+            for (let x = minX; x <= maxX; x += gridSnapSpacing) {
+              for (let y = minY; y <= maxY; y += gridSnapSpacing) {
+                candidates.push([x, y]);
+              }
+            }
+            candidates.sort((a, b) => (a[0] - gcx) ** 2 + (a[1] - gcy) ** 2 - (b[0] - gcx) ** 2 - (b[1] - gcy) ** 2);
+            members.forEach((n: any) => {
+              const slot = candidates.find(([x, y]) => !usedSlots.has(`${x},${y}`));
+              if (slot) {
+                usedSlots.add(`${slot[0]},${slot[1]}`);
+                n.x = slot[0]; n.y = slot[1];
+              } else {
+                n.x = gcx; n.y = gcy;
+              }
+              n.vx = 0; n.vy = 0;
+            });
+          } else {
+            members.forEach((n: any) => {
+              const angle = Math.random() * 2 * Math.PI;
+              const dist = Math.random() * r * 0.7;
+              n.x = Math.cos(angle) * dist;
+              n.y = Math.sin(angle) * dist;
+              n.vx = 0; n.vy = 0;
+            });
+          }
+        });
+      }
+    };
+
+    return force;
+  }
+
+  function initPolyBlocksNodes(nodes: any[], spacing: number, rectStore?: { treemapSize: number; rects: Map<string, { x0: number; y0: number; x1: number; y1: number }> }) {
+    const groupKeyToName: string[] = [];
+    const groups: { members: any[] }[] = [];
+    const groupKey = new Map<string, number>();
+    nodes.forEach((n: any) => {
+      const file = n.data?.file;
+      const folder = n.data?.folder || "";
+      const key = file ? (folder ? `${folder}/${file}` : file) : "";
+      if (key) {
+        if (!groupKey.has(key)) { groupKey.set(key, groups.length); groups.push({ members: [] }); groupKeyToName.push(key); }
+        groups[groupKey.get(key)!].members.push(n);
+      }
+    });
+    if (groups.length === 0) return;
+    if (rectStore) rectStore.rects.clear();
+
+    const globalUsed = new Set<string>();
+
+    try {
+      const rootData: any = { id: "root", children: [] };
+      groups.forEach((g, i) => rootData.children.push({ id: String(i), value: g.members.length }));
+      const root = d3.hierarchy(rootData).sum(d => d.value);
+      const rawSize = Math.max(600, Math.ceil(Math.sqrt(nodes.length) * spacing * 2.5));
+      const treemapSize = Math.ceil(rawSize / (spacing * 2)) * (spacing * 2);
+      d3.treemap<any>().size([treemapSize, treemapSize]).padding(16).round(true)(root);
+
+      if (rectStore) rectStore.treemapSize = treemapSize;
+
+      root.children?.forEach((child: any) => {
+        const gi = Number(child.data.id);
+        const g = groups[gi];
+        if (rectStore && groupKeyToName[gi]) {
+          const half = treemapSize / 2;
+          rectStore.rects.set(groupKeyToName[gi], { x0: child.x0 - half, y0: child.y0 - half, x1: child.x1 - half, y1: child.y1 - half });
+        }
+        const [x0, y0, x1, y1] = [child.x0, child.y0, child.x1, child.y1];
+        const slots: [number, number][] = [];
+        const gx0 = Math.floor(x0 / spacing) * spacing;
+        const gy0 = Math.floor(y0 / spacing) * spacing;
+        const gx1 = Math.ceil(x1 / spacing) * spacing;
+        const gy1 = Math.ceil(y1 / spacing) * spacing;
+        for (let x = gx0; x < gx1; x += spacing)
+          for (let y = gy0; y < gy1; y += spacing)
+            if (x >= x0 && x < x1 && y >= y0 && y < y1) slots.push([x - treemapSize / 2, y - treemapSize / 2]);
+        slots.sort((a, b) => (a[0] - slots[0][0]) ** 2 + (a[1] - slots[0][1]) ** 2 - (b[0] - slots[0][0]) ** 2 - (b[1] - slots[0][1]) ** 2);
+        const offX = Math.round((x0 + x1) / 2 / spacing) * spacing - treemapSize / 2;
+        const offY = Math.round((y0 + y1) / 2 / spacing) * spacing - treemapSize / 2;
+        const boundCheck = (sx: number, sy: number) => {
+          const rx = sx + treemapSize / 2, ry = sy + treemapSize / 2;
+          return rx >= x0 && rx < x1 && ry >= y0 && ry < y1;
+        };
+        const findSlot = (taken: Set<string>, cx: number, cy: number) => {
+          for (let ring = 0; ring < 30; ring++) {
+            for (let dx = -ring; dx <= ring; dx++) {
+              for (let dy = -ring; dy <= ring; dy++) {
+                if (Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+                const sx = Math.round((cx + dx * spacing) / spacing) * spacing;
+                const sy = Math.round((cy + dy * spacing) / spacing) * spacing;
+                if (boundCheck(sx, sy) && !taken.has(`${sx},${sy}`)) return [sx, sy] as [number, number];
+              }
+            }
+          }
+          return null;
+        };
+
+        let fallbackIdx = 0;
+        g.members.forEach((n, i) => {
+          if (i < slots.length) {
+            const sk = `${slots[i][0]},${slots[i][1]}`;
+            if (!globalUsed.has(sk)) {
+              globalUsed.add(sk); n.x = slots[i][0]; n.y = slots[i][1]; n.vx = 0; n.vy = 0; return;
+            }
+          }
+          let found = findSlot(globalUsed, offX, offY);
+          if (!found) {
+            for (let ring = 0; !found && ring < 30; ring++) {
+              for (let dx = -ring; dx <= ring && !found; dx++) {
+                for (let dy = -ring; dy <= ring && !found; dy++) {
+                  if (Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+                  const sx = offX + dx * spacing, sy = offY + dy * spacing;
+                  if (!globalUsed.has(`${sx},${sy}`)) { found = [sx, sy]; }
+                }
+              }
+            }
+          }
+          if (found) { globalUsed.add(`${found[0]},${found[1]}`); n.x = found[0]; n.y = found[1]; }
+          else { fallbackIdx++; n.x = offX + (fallbackIdx % 5) * (spacing / 2); n.y = offY + Math.floor(fallbackIdx / 5) * (spacing / 2); }
+          n.vx = 0; n.vy = 0;
+        });
+      });
+    } catch {
+      nodes.forEach((n: any, i) => { n.x = (i % 10) * spacing - 200; n.y = Math.floor(i / 10) * spacing - 200; n.vx = 0; n.vy = 0; });
+    }
   }
 
   const [customData, setCustomData] = useState<{
@@ -1293,13 +1675,16 @@ function App() {
 
   const resetGraph = useCallback(() => {
     if (simulationRef.current) {
-      // Reset all node positions with random positions around center
-      filteredNodes.forEach((node: any) => {
-        node.x = (Math.random() - 0.5) * 100;
-        node.y = (Math.random() - 0.5) * 100;
-        node.vx = 0;
-        node.vy = 0;
-      });
+      if (viewMode === "poly-blocks") {
+        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+      } else {
+        filteredNodes.forEach((node: any) => {
+          node.x = (Math.random() - 0.5) * 100;
+          node.y = (Math.random() - 0.5) * 100;
+          node.vx = 0;
+          node.vy = 0;
+        });
+      }
       // Reset transform to center
       transformRef.current = {
         x: window.innerWidth / 2 - (sidebarOpenRef.current ? 150 : 0),
@@ -1715,37 +2100,55 @@ function App() {
 
     canvas.addEventListener("wheel", handleWheel);
 
+    if (viewMode === "poly-blocks") {
+      const needsInit = filteredNodes.length > 0 && (
+        polyBlocksDataRef.current !== generatedNodes ||
+        Math.abs(filteredNodes[0].x % 40) > 0.1
+      );
+      if (needsInit) {
+        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+        polyBlocksDataRef.current = generatedNodes;
+      }
+    }
+
     const isGroupingMode = viewMode !== "edges";
-    const isLegacy = viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2";
+    const isLegacy = viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2" || viewMode === "poly-blocks";
 
     const simulation = d3
       .forceSimulation(filteredNodes as any)
       .alphaDecay(forcesEnabled ? 0 : alphaDecayValue);
 
-    if (isLegacy) {
-      simulation
-        .force("charge", d3.forceManyBody().strength(chargeStrength))
-        .force("x", d3.forceX(0))
-        .force("y", d3.forceY(0));
+    const boundaryRadius = 600;
+    if (viewMode !== "poly-blocks") {
+      simulation.force("boundary", (alpha: number) => {
+        filteredNodes.forEach((node: any) => {
+          const d = Math.sqrt(node.x * node.x + node.y * node.y);
+          if (d > boundaryRadius) {
+            const overlap = d - boundaryRadius;
+            const f = overlap * 0.5 * alpha;
+            node.vx -= (node.x / d) * f;
+            node.vy -= (node.y / d) * f;
+          }
+        });
+      });
     }
 
-    const boundaryRadius = 600;
-    simulation.force("boundary", (alpha: number) => {
-      filteredNodes.forEach((node: any) => {
-        const d = Math.sqrt(node.x * node.x + node.y * node.y);
-        if (d > boundaryRadius) {
-          const overlap = d - boundaryRadius;
-          const f = overlap * 0.5 * alpha;
-          node.vx -= (node.x / d) * f;
-          node.vy -= (node.y / d) * f;
-        }
-      });
-    });
-
-    if (isGroupingMode) {
-      simulation.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, isLegacy));
-      simulation.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, isLegacy));
-      simulation.force("collide", d3.forceCollide(15));
+    if (viewMode === "poly-blocks") {
+      // no forces
+    } else if (isGroupingMode) {
+      if (isLegacy) {
+        simulation.force("twoLevel", twoLevelLayoutForce(filteredEdges as any, {
+          groupStrength: groupCohesionStrength,
+          crossFileStrength: crossFileEdgeStrength,
+          collisionStrength,
+          repelStrength,
+        }, 0));
+        simulation.force("collide", d3.forceCollide(15));
+      } else {
+        simulation.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, isLegacy));
+        simulation.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, isLegacy));
+        simulation.force("collide", d3.forceCollide(15));
+      }
     } else {
       simulation.force(
         "link",
@@ -1760,6 +2163,25 @@ function App() {
 
     simulation.on("tick", () => {
       draw();
+      if (viewMode === "poly-blocks") {
+        let anyAnimating = false;
+        filteredNodes.forEach((node: any) => {
+          if (node._snapTarget) {
+            const dx = node._snapTarget.x - node.x;
+            const dy = node._snapTarget.y - node.y;
+            if (dx * dx + dy * dy < 0.5) {
+              node.x = node._snapTarget.x;
+              node.y = node._snapTarget.y;
+              node._snapTarget = null;
+            } else {
+              node.x += dx * 0.2;
+              node.y += dy * 0.2;
+              anyAnimating = true;
+            }
+          }
+        });
+        if (anyAnimating) draw();
+      }
     });
 
     // Stop simulation if locked
@@ -1778,13 +2200,37 @@ function App() {
       context.scale(transformRef.current.k, transformRef.current.k);
 
       // Draw boundary circle
-      context.beginPath();
-      context.arc(0, 0, boundaryRadius, 0, 2 * Math.PI);
-      context.strokeStyle = "rgba(255, 0, 0, 0.3)";
-      context.lineWidth = 1;
-      context.setLineDash([6, 4]);
-      context.stroke();
-      context.setLineDash([]);
+      if (viewMode !== "poly-blocks") {
+        context.beginPath();
+        context.arc(0, 0, boundaryRadius, 0, 2 * Math.PI);
+        context.strokeStyle = "rgba(255, 0, 0, 0.3)";
+        context.lineWidth = 1;
+        context.setLineDash([6, 4]);
+        context.stroke();
+        context.setLineDash([]);
+      }
+
+      // Background grid for poly-blocks mode
+      if (viewMode === "poly-blocks") {
+        const gs = 40;
+        const t = transformRef.current;
+        const minX = Math.floor((-t.x) / t.k / gs) * gs;
+        const maxX = Math.ceil((widthRef.current - t.x) / t.k / gs) * gs;
+        const minY = Math.floor((-t.y) / t.k / gs) * gs;
+        const maxY = Math.ceil((heightRef.current - t.y) / t.k / gs) * gs;
+        const cols = Math.round((maxX - minX) / gs) + 1;
+        const rows = Math.round((maxY - minY) / gs) + 1;
+        if (cols * rows < 5000) {
+          context.fillStyle = "rgba(255, 255, 255, 0.06)";
+          context.beginPath();
+          for (let x = minX; x <= maxX; x += gs)
+            for (let y = minY; y <= maxY; y += gs) {
+              context.moveTo(x + 1.5, y);
+              context.arc(x, y, 1.5, 0, 2 * Math.PI);
+            }
+          context.fill();
+        }
+      }
 
       // Draw polygons/circles/boxes/offsets around nodes from the same file
       // Store hull paths for clipping edges inside groups
@@ -1803,7 +2249,8 @@ function App() {
         viewMode === "oriented-rect-rounded" ||
         viewMode === "oriented-rect-roundpoly" ||
         viewMode === "oriented-rect-roundpoly2" ||
-        viewMode === "poly-solid"
+        viewMode === "poly-solid" ||
+        viewMode === "poly-blocks"
       ) {
         const nodesByFile = new Map<string, any[]>();
         filteredNodes.forEach((node: any) => {
@@ -3012,7 +3459,7 @@ function App() {
               ]);
             }
             groupHulls.set(uniqueKey, circleHull);
-          } else if (viewMode === "boxes") {
+          } else if (viewMode === "boxes" || viewMode === "poly-blocks") {
             // Bounding box with rounded corners for boxes mode
             if (nodes.length < 1) return;
 
@@ -3094,7 +3541,8 @@ function App() {
         viewMode === "oriented-rect-rounded" ||
         viewMode === "oriented-rect-roundpoly" ||
         viewMode === "oriented-rect-roundpoly2" ||
-        viewMode === "poly-solid";
+        viewMode === "poly-solid" ||
+        viewMode === "poly-blocks";
 
       if (isGroupingMode) {
         // Group edges by file-to-file connections for namespace imports
@@ -3109,15 +3557,24 @@ function App() {
           fileToNodes.get(uniqueKey)!.push(node);
         });
 
-        // Calculate centroids for each file
+        // Calculate centers for each file
         const fileCentroids = new Map<string, { x: number; y: number }>();
         fileToNodes.forEach((nodes, file) => {
-          const sumX = nodes.reduce((sum, n) => sum + n.x, 0);
-          const sumY = nodes.reduce((sum, n) => sum + n.y, 0);
-          fileCentroids.set(file, {
-            x: sumX / nodes.length,
-            y: sumY / nodes.length,
-          });
+          if (viewMode === "poly-blocks") {
+            const xs = nodes.map((n: any) => n.x);
+            const ys = nodes.map((n: any) => n.y);
+            fileCentroids.set(file, {
+              x: (Math.min(...xs) + Math.max(...xs)) / 2,
+              y: (Math.min(...ys) + Math.max(...ys)) / 2,
+            });
+          } else {
+            const sumX = nodes.reduce((sum, n) => sum + n.x, 0);
+            const sumY = nodes.reduce((sum, n) => sum + n.y, 0);
+            fileCentroids.set(file, {
+              x: sumX / nodes.length,
+              y: sumY / nodes.length,
+            });
+          }
         });
 
         // Resolve edge source/target from string IDs to node objects
@@ -3437,7 +3894,7 @@ function App() {
       }
 
       // Draw collision and group bounding circles in polygon view
-      if (viewMode !== "edges") {
+      if (viewMode !== "edges" && viewMode !== "poly-blocks") {
         filteredNodes.forEach((node: any) => {
           context.beginPath();
           context.arc(node.x, node.y, 15, 0, 2 * Math.PI);
@@ -3691,19 +4148,24 @@ function App() {
 
       // Handle drag
       if (draggedNode) {
-        draggedNode.fx = mouseX;
-        draggedNode.fy = mouseY;
+        if (draggedNode._dragOffset) {
+          draggedNode.fx = mouseX + draggedNode._dragOffset.x;
+          draggedNode.fy = mouseY + draggedNode._dragOffset.y;
+        } else {
+          draggedNode.fx = mouseX;
+          draggedNode.fy = mouseY;
+        }
         draw();
         return;
       }
 
       // Handle hover
+      const hoverRadius = viewMode === "poly-blocks" ? 225 : 100;
       let found = null;
       for (const node of filteredNodes) {
         const dx = mouseX - node.x;
         const dy = mouseY - node.y;
-        if (dx * dx + dy * dy < 100) {
-          // 10px radius squared
+        if (dx * dx + dy * dy < hoverRadius) {
           found = node;
           break;
         }
@@ -3724,7 +4186,8 @@ function App() {
         viewMode !== "oriented-rect-rounded" &&
         viewMode !== "oriented-rect-roundpoly" &&
         viewMode !== "oriented-rect-roundpoly2" &&
-        viewMode !== "poly-solid";
+        viewMode !== "poly-solid" &&
+        viewMode !== "poly-blocks";
       if (!found && isEdgeMode) {
         for (const edge of filteredEdges) {
           const dx = edge.target.x - edge.source.x;
@@ -3828,13 +4291,14 @@ function App() {
         (event.clientY - rect.top - transformRef.current.y) /
         transformRef.current.k;
 
+      const pickRadius = viewMode === "poly-blocks" ? 225 : 100;
+
       // Check for node click (selection)
       let nodeClicked = false;
       for (const node of filteredNodes) {
         const dx = mouseX - node.x;
         const dy = mouseY - node.y;
-        if (dx * dx + dy * dy < 100) {
-          // 10px radius squared
+        if (dx * dx + dy * dy < pickRadius) {
           handleSelectSymbol(node.id);
           nodeClicked = true;
           draw();
@@ -3851,11 +4315,13 @@ function App() {
       for (const node of filteredNodes) {
         const dx = mouseX - node.x;
         const dy = mouseY - node.y;
-        if (dx * dx + dy * dy < 100) {
+        if (dx * dx + dy * dy < pickRadius) {
           draggedNode = node;
           if (!simulationLockedRef.current && simulationRef.current) {
             simulationRef.current.alpha(0.3).restart();
           }
+          node._snapTarget = null;
+          node._dragOffset = { x: node.x - mouseX, y: node.y - mouseY };
           draggedNode.fx = node.x;
           draggedNode.fy = node.y;
           break;
@@ -3865,14 +4331,80 @@ function App() {
 
     canvas.addEventListener("mousedown", handleMouseDown);
 
+    const snapToGrid = (node: any) => {
+      if (viewMode !== "poly-blocks") return;
+      const gx = Math.round(node.x / 40) * 40;
+      const gy = Math.round(node.y / 40) * 40;
+      if (gx === node.x && gy === node.y) return;
+
+      const file = node.data?.file;
+      const folder = node.data?.folder || "";
+      const nodeKey = file ? (folder ? `${folder}/${file}` : file) : "";
+      if (!nodeKey) { node._snapTarget = { x: gx, y: gy }; return; }
+
+      const boxes = new Map<string, { minX: number; maxX: number; minY: number; maxY: number }>();
+      filteredNodes.forEach((n: any) => {
+        const f = n.data?.file;
+        const d = n.data?.folder || "";
+        const k = f ? (d ? `${d}/${f}` : f) : "";
+        if (!k) return;
+        if (!boxes.has(k)) boxes.set(k, { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+        const b = boxes.get(k)!;
+        if (n.x < b.minX) b.minX = n.x; if (n.x > b.maxX) b.maxX = n.x;
+        if (n.y < b.minY) b.minY = n.y; if (n.y > b.maxY) b.maxY = n.y;
+      });
+
+      type Box = { minX: number; maxX: number; minY: number; maxY: number };
+      const inside = (bx: Box, x: number, y: number) => x >= bx.minX && x <= bx.maxX && y >= bx.minY && y <= bx.maxY;
+      const occ = new Set<string>();
+      filteredNodes.forEach((o: any) => {
+        if (o === node) return;
+        if (o._snapTarget) {
+          occ.add(`${Math.round(o._snapTarget.x / 40) * 40},${Math.round(o._snapTarget.y / 40) * 40}`);
+        } else {
+          occ.add(`${Math.round(o.x / 40) * 40},${Math.round(o.y / 40) * 40}`);
+        }
+      });
+
+      const inForeign = (x: number, y: number) => {
+        let result = false;
+        boxes.forEach((bx, k) => { if (k !== nodeKey && inside(bx, x, y)) result = true; });
+        return result;
+      };
+
+      if (!inForeign(gx, gy) && !occ.has(`${gx},${gy}`)) { node._snapTarget = { x: gx, y: gy }; return; }
+      const own = boxes.get(nodeKey);
+      const cx = own ? (own.minX + own.maxX) / 2 : 0;
+      const cy = own ? (own.minY + own.maxY) / 2 : 0;
+      for (let ring = 0; ring < 30; ring++) {
+        for (let dx = -ring; dx <= ring; dx++) {
+          for (let dy = -ring; dy <= ring; dy++) {
+            if (Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+            const sx = Math.round((cx + dx * 40) / 40) * 40;
+            const sy = Math.round((cy + dy * 40) / 40) * 40;
+            if (inForeign(sx, sy)) continue;
+            if (!occ.has(`${sx},${sy}`)) { node._snapTarget = { x: sx, y: sy }; return; }
+          }
+        }
+      }
+    };
+
+    const restartSim = () => {
+      if (!simulationLockedRef.current && simulationRef.current && simulationRef.current.alpha() < 0.001) {
+        simulationRef.current.alpha(0.3).restart();
+      }
+    };
+
     const handleMouseUp = () => {
       isPanning = false;
       if (draggedNode) {
         draggedNode.fx = null;
         draggedNode.fy = null;
+        snapToGrid(draggedNode);
         draggedNode = null;
         if (!simulationLockedRef.current && simulationRef.current) {
           simulationRef.current.alphaTarget(0);
+          restartSim();
         }
       }
     };
@@ -3887,7 +4419,9 @@ function App() {
       if (draggedNode) {
         draggedNode.fx = null;
         draggedNode.fy = null;
+        snapToGrid(draggedNode);
         draggedNode = null;
+        restartSim();
         if (!simulationLockedRef.current && simulationRef.current) {
           simulationRef.current.alphaTarget(0);
         }
@@ -4010,21 +4544,43 @@ function App() {
   useEffect(() => {
     if (simulationRef.current) {
       const existingGroup = simulationRef.current.force("group");
+      const existingTwoLevel = simulationRef.current.force("twoLevel");
       if (existingGroup) {
         simulationRef.current.force("group", null);
         simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2"));
         simulationRef.current.alpha(1).restart();
       }
+      if (existingTwoLevel) {
+        simulationRef.current.force("twoLevel", null);
+        simulationRef.current.force("twoLevel", twoLevelLayoutForce(filteredEdges as any, {
+          groupStrength: groupCohesionStrength,
+          crossFileStrength: crossFileEdgeStrength,
+          collisionStrength,
+          repelStrength,
+        }, viewMode === "poly-blocks" ? 40 : 0));
+        simulationRef.current.alpha(1).restart();
+      }
     }
-  }, [groupCohesionStrength, collisionStrength, repelStrength]);
+  }, [groupCohesionStrength, collisionStrength, repelStrength, crossFileEdgeStrength, filteredEdges]);
 
   // Update cross-file edge strength when parameter changes
   useEffect(() => {
     if (simulationRef.current) {
       const existingCrossFile = simulationRef.current.force("crossFile");
+      const existingTwoLevel = simulationRef.current.force("twoLevel");
       if (existingCrossFile) {
         simulationRef.current.force("crossFile", null);
         simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2"));
+        simulationRef.current.alpha(1).restart();
+      }
+      if (existingTwoLevel) {
+        simulationRef.current.force("twoLevel", null);
+        simulationRef.current.force("twoLevel", twoLevelLayoutForce(filteredEdges as any, {
+          groupStrength: groupCohesionStrength,
+          crossFileStrength: crossFileEdgeStrength,
+          collisionStrength,
+          repelStrength,
+        }, viewMode === "poly-blocks" ? 40 : 0));
         simulationRef.current.alpha(1).restart();
       }
     }
@@ -4042,26 +4598,59 @@ function App() {
       const existingCharge = simulationRef.current.force("charge");
       const existingX = simulationRef.current.force("x");
       const existingY = simulationRef.current.force("y");
-      if (isGroupingMode) {
+      const existingTwoLevel = simulationRef.current.force("twoLevel");
+      if (viewMode === "poly-blocks") {
         if (existingLink) simulationRef.current.force("link", null);
-        if (!existingGroup) {
-          simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, isLegacy));
+        if (existingGroup) simulationRef.current.force("group", null);
+        if (existingCrossFile) simulationRef.current.force("crossFile", null);
+        if (existingCollide) simulationRef.current.force("collide", null);
+        if (existingCharge) simulationRef.current.force("charge", null);
+        if (existingX) simulationRef.current.force("x", null);
+        if (existingY) simulationRef.current.force("y", null);
+        if (existingTwoLevel) simulationRef.current.force("twoLevel", null);
+        const needsInit = filteredNodes.length > 0 && (
+          polyBlocksDataRef.current !== generatedNodes ||
+          Math.abs(filteredNodes[0].x % 40) > 0.1
+        );
+        if (needsInit) {
+          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+          polyBlocksDataRef.current = generatedNodes;
         }
-        if (!existingCrossFile) {
-          simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, isLegacy));
+      } else if (isGroupingMode) {
+        if (existingLink) simulationRef.current.force("link", null);
+        if (existingTwoLevel && !isLegacy) {
+          simulationRef.current.force("twoLevel", null);
+        }
+        if (isLegacy) {
+          if (existingGroup) simulationRef.current.force("group", null);
+          if (existingCrossFile) simulationRef.current.force("crossFile", null);
+          if (existingCharge) simulationRef.current.force("charge", null);
+          if (existingX) simulationRef.current.force("x", null);
+          if (existingY) simulationRef.current.force("y", null);
+          if (!existingTwoLevel) {
+            simulationRef.current.force("twoLevel", twoLevelLayoutForce(filteredEdges as any, {
+              groupStrength: groupCohesionStrength,
+              crossFileStrength: crossFileEdgeStrength,
+              collisionStrength,
+              repelStrength,
+            }, 0));
+          }
+        } else {
+          if (existingTwoLevel) simulationRef.current.force("twoLevel", null);
+          if (!existingGroup) {
+            simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, isLegacy));
+          }
+          if (!existingCrossFile) {
+            simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, isLegacy));
+          }
+          if (existingCharge) {
+            simulationRef.current.force("charge", null);
+            simulationRef.current.force("x", null);
+            simulationRef.current.force("y", null);
+          }
         }
         if (!existingCollide) {
           simulationRef.current.force("collide", d3.forceCollide(15));
-        }
-        if (isLegacy && !existingCharge) {
-          simulationRef.current.force("charge", d3.forceManyBody().strength(chargeStrength));
-          simulationRef.current.force("x", d3.forceX(0));
-          simulationRef.current.force("y", d3.forceY(0));
-        }
-        if (!isLegacy && existingCharge) {
-          simulationRef.current.force("charge", null);
-          simulationRef.current.force("x", null);
-          simulationRef.current.force("y", null);
         }
       } else {
         if (existingGroup) simulationRef.current.force("group", null);
@@ -4070,6 +4659,7 @@ function App() {
         if (existingCharge) simulationRef.current.force("charge", null);
         if (existingX) simulationRef.current.force("x", null);
         if (existingY) simulationRef.current.force("y", null);
+        if (existingTwoLevel) simulationRef.current.force("twoLevel", null);
         if (!existingLink) {
           simulationRef.current.force(
             "link",
@@ -4114,25 +4704,53 @@ function App() {
       }
       const isGroupingMode = viewMode !== "edges";
       const isLegacy = viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2";
-      if (isGroupingMode) {
+      if (viewMode === "poly-blocks") {
         simulationRef.current.force("group", null);
-        simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, isLegacy));
         simulationRef.current.force("crossFile", null);
-        simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, isLegacy));
+        simulationRef.current.force("charge", null);
+        simulationRef.current.force("x", null);
+        simulationRef.current.force("y", null);
+        simulationRef.current.force("twoLevel", null);
         simulationRef.current.force("collide", null);
-        simulationRef.current.force("collide", d3.forceCollide(15));
+        const needsInit = filteredNodes.length > 0 && (
+          polyBlocksDataRef.current !== generatedNodes ||
+          Math.abs(filteredNodes[0].x % 40) > 0.1
+        );
+        if (needsInit) {
+          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+          polyBlocksDataRef.current = generatedNodes;
+        }
+      } else if (isGroupingMode) {
         if (isLegacy) {
-          if (!simulationRef.current.force("charge")) {
-            simulationRef.current.force("charge", d3.forceManyBody().strength(chargeStrength));
-            simulationRef.current.force("x", d3.forceX(0));
-            simulationRef.current.force("y", d3.forceY(0));
-          }
+          simulationRef.current.force("group", null);
+          simulationRef.current.force("crossFile", null);
+          simulationRef.current.force("charge", null);
+          simulationRef.current.force("x", null);
+          simulationRef.current.force("y", null);
+          simulationRef.current.force("twoLevel", null);
+          simulationRef.current.force("twoLevel", twoLevelLayoutForce(filteredEdges as any, {
+            groupStrength: groupCohesionStrength,
+            crossFileStrength: crossFileEdgeStrength,
+            collisionStrength,
+            repelStrength,
+          }));
         } else {
+          simulationRef.current.force("twoLevel", null);
+          simulationRef.current.force("group", null);
+          simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, isLegacy));
+          simulationRef.current.force("crossFile", null);
+          simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, isLegacy));
           simulationRef.current.force("charge", null);
           simulationRef.current.force("x", null);
           simulationRef.current.force("y", null);
         }
+        simulationRef.current.force("collide", null);
+        simulationRef.current.force("collide", d3.forceCollide(15));
       } else {
+        simulationRef.current.force("twoLevel", null);
+        simulationRef.current.force("group", null);
+        simulationRef.current.force("crossFile", null);
+        simulationRef.current.force("collide", null);
         simulationRef.current.force("charge", null);
         simulationRef.current.force("x", null);
         simulationRef.current.force("y", null);
@@ -4419,6 +5037,12 @@ function App() {
                 label="Polygon"
                 currentViewMode={viewMode}
                 onClick={() => setViewMode("oriented-rect-roundpoly")}
+              />
+              <ViewModeButton
+                mode="poly-blocks"
+                label="Poly Blocks"
+                currentViewMode={viewMode}
+                onClick={() => setViewMode("poly-blocks")}
               />
               <ViewModeButton
                 mode="edges"
