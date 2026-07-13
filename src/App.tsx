@@ -305,6 +305,8 @@ function App() {
     return saved !== null ? JSON.parse(saved) : 0.5;
   });
   const [groupCohesionStrength, setGroupCohesionStrength] = useState(1);
+  const [collisionStrength, setCollisionStrength] = useState(1);
+  const [repelStrength, setRepelStrength] = useState(0);
   const [crossFileEdgeStrength, setCrossFileEdgeStrength] = useState(0.3);
   const [viewMode, setViewMode] = useState<
     | "edges"
@@ -320,13 +322,18 @@ function App() {
     | "oriented-rect-rounded"
     | "oriented-rect-roundpoly"
     | "oriented-rect-roundpoly2"
+    | "poly-solid"
   >("oriented-rect-roundpoly");
 
-  function groupCohesionForce(strength: number) {
+  function groupCohesionForce(strength: number, colStrength: number, repelStrength: number, legacy: boolean) {
     let nodes: any[];
     function force(alpha: number) {
       const groups = new Map<string, any[]>();
       nodes.forEach((node: any) => {
+        if (!node._debug) node._debug = {};
+        node._debug.edgePush = [0, 0];
+        node._debug.groupPush = [0, 0];
+        node._debug.crossFile = [0, 0];
         const file = node.data?.file;
         const folder = node.data?.folder || "";
         if (!file) return;
@@ -334,42 +341,373 @@ function App() {
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key)!.push(node);
       });
-      const groupBounds = new Map<string, { cx: number; cy: number; radius: number }>();
+
+      if (legacy) {
+        const groupBounds = new Map<string, { cx: number; cy: number; radius: number }>();
+        groups.forEach((groupNodes, key) => {
+          const cx = groupNodes.reduce((s, n) => s + n.x, 0) / groupNodes.length;
+          const cy = groupNodes.reduce((s, n) => s + n.y, 0) / groupNodes.length;
+          const maxDist = Math.max(...groupNodes.map((n: any) => Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2))) || 1;
+          const groupRadius = maxDist + 15;
+          groupBounds.set(key, { cx, cy, radius: groupRadius });
+          groupNodes.forEach((node: any) => {
+            const dx = node.x - cx;
+            const dy = node.y - cy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const boundary = groupRadius - 15;
+            if (dist > boundary) {
+              const overlap = dist - boundary;
+              node.vx -= (dx / dist) * overlap * strength * alpha;
+              node.vy -= (dy / dist) * overlap * strength * alpha;
+            }
+          });
+        });
+        const keys = Array.from(groupBounds.keys());
+        for (let i = 0; i < keys.length; i++) {
+          for (let j = i + 1; j < keys.length; j++) {
+            const a = groupBounds.get(keys[i])!;
+            const b = groupBounds.get(keys[j])!;
+            const dx = b.cx - a.cx;
+            const dy = b.cy - a.cy;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const minDist = a.radius + b.radius;
+            if (dist < minDist) {
+              const overlap = minDist - dist;
+              const pushX = (dx / dist) * overlap * strength * alpha;
+              const pushY = (dy / dist) * overlap * strength * alpha;
+              const groupA = groups.get(keys[i])!;
+              const groupB = groups.get(keys[j])!;
+              groupA.forEach((n: any) => { n.vx -= pushX; n.vy -= pushY; });
+              groupB.forEach((n: any) => { n.vx += pushX; n.vy += pushY; });
+            }
+          }
+        }
+        return;
+      }
+
+      const groupHulls = new Map<string, [number, number][]>();
+      const groupCircles = new Map<string, { cx: number; cy: number; radius: number }>();
+      const edgePadding = 15;
       groups.forEach((groupNodes, key) => {
         const cx = groupNodes.reduce((s, n) => s + n.x, 0) / groupNodes.length;
         const cy = groupNodes.reduce((s, n) => s + n.y, 0) / groupNodes.length;
-        const maxDist = Math.max(...groupNodes.map((n: any) => Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2))) || 1;
-        const groupRadius = maxDist + 15;
-        groupBounds.set(key, { cx, cy, radius: groupRadius });
+
+        if (groupNodes.length >= 3) {
+          const pts: [number, number][] = groupNodes.map((n: any) => [n.x, n.y]);
+          const hull = d3.polygonHull(pts) as [number, number][] | null;
+          if (hull && hull.length >= 3) {
+            // Expand hull outward by 15px with rounded corners matching visual
+            const r = 15;
+            const arcSegs = 4;  // vertices per arc (excluding endpoints)
+            // Precompute outward perp for each edge
+            const perps: [number, number][] = [];
+            const n = hull.length;
+            for (let i = 0; i < n; i++) {
+              const curr = hull[i];
+              const next = hull[(i + 1) % n];
+              const ex = next[0] - curr[0], ey = next[1] - curr[1];
+              const len = Math.sqrt(ex * ex + ey * ey) || 1;
+              let px = -ey / len, py = ex / len;
+              const cx = (curr[0] + next[0]) / 2, cy = (curr[1] + next[1]) / 2;
+              if (px * cx + py * cy > 0) { px = -px; py = -py; }
+              perps.push([px, py]);
+            }
+            const offsetHull: [number, number][] = [];
+            for (let i = 0; i < n; i++) {
+              const curr = hull[i];
+              const p_in = perps[(i - 1 + n) % n];   // perp of edge (i-1→i)
+              const p_out = perps[i];                  // perp of edge (i→i+1)
+              // End of straight offset edge (i-1→i) = start of arc
+              offsetHull.push([curr[0] + p_in[0] * r, curr[1] + p_in[1] * r]);
+              // Arc vertices around curr connecting p_in to p_out
+              const sa = Math.atan2(p_in[1], p_in[0]);
+              let ea = Math.atan2(p_out[1], p_out[0]);
+              const cross = p_in[0] * p_out[1] - p_in[1] * p_out[0];
+              if (cross < 0) { if (ea < sa) ea += 2 * Math.PI; }
+              else { if (ea > sa) ea -= 2 * Math.PI; }
+              for (let k = 1; k <= arcSegs; k++) {
+                const a = sa + (ea - sa) * k / (arcSegs + 1);
+                offsetHull.push([curr[0] + Math.cos(a) * r, curr[1] + Math.sin(a) * r]);
+              }
+              // End of arc = start of next straight offset edge
+              offsetHull.push([curr[0] + p_out[0] * r, curr[1] + p_out[1] * r]);
+            }
+            groupHulls.set(key, offsetHull);
+            groupNodes.forEach((node: any) => {
+              let minDist = Infinity;
+              let pushDir: [number, number] = [0, 0];
+              for (let i = 0; i < offsetHull.length; i++) {
+                const j = (i + 1) % offsetHull.length;
+                const ax = offsetHull[i][0], ay = offsetHull[i][1];
+                const bx = offsetHull[j][0], by = offsetHull[j][1];
+                const ex2 = bx - ax, ey2 = by - ay;
+                const eLen = Math.sqrt(ex2 * ex2 + ey2 * ey2);
+                if (eLen < 1e-10) continue;
+                const t = Math.max(0, Math.min(1, ((node.x - ax) * ex2 + (node.y - ay) * ey2) / (eLen * eLen)));
+                const ppx = ax + ex2 * t, ppy = ay + ey2 * t;
+                const ddx = node.x - ppx, ddy = node.y - ppy;
+                const d = Math.sqrt(ddx * ddx + ddy * ddy);
+                if (d < minDist) {
+                  minDist = d;
+                  let nx2 = -ey2 / eLen, ny2 = ex2 / eLen;
+                  if (nx2 * (cx - ax) + ny2 * (cy - ay) < 0) { nx2 = -nx2; ny2 = -ny2; }
+                  pushDir = [nx2, ny2];
+                }
+              }
+              if (minDist < edgePadding) {
+                const overlap = edgePadding - minDist;
+                const cdx = cx - node.x, cdy = cy - node.y;
+                const cDist = Math.sqrt(cdx * cdx + cdy * cdy) || 1;
+                const bw = Math.min(cDist / edgePadding, 1);
+                const dx2 = (1 - bw) * pushDir[0] + bw * (cdx / cDist);
+                const dy2 = (1 - bw) * pushDir[1] + bw * (cdy / cDist);
+                const dl = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+                const fx = (dx2 / dl) * overlap * strength * alpha;
+                const fy = (dy2 / dl) * overlap * strength * alpha;
+                node.vx += fx;
+                node.vy += fy;
+                node._debug.edgePush = [node._debug.edgePush[0] + fx, node._debug.edgePush[1] + fy];
+              }
+            });
+            return;
+          }
+        }
+
+        if (groupNodes.length === 2) {
+          const p1 = groupNodes[0], p2 = groupNodes[1];
+          const zoneSize = 10;
+          // Capsule hull with rounded ends matching visible polygon
+          const ex = p2.x - p1.x, ey = p2.y - p1.y;
+          const len = Math.sqrt(ex * ex + ey * ey) || 1;
+          const ux = ex / len, uy = ey / len;
+          const vx = -uy, vy = ux;
+          const r = 15;
+          const capPts: [number, number][] = [];
+          capPts.push([p1.x + r * vx, p1.y + r * vy]);                      // top of p1
+          capPts.push([p2.x + r * vx, p2.y + r * vy]);                      // top of p2
+          for (let i = 1; i < 4; i++) {                                     // right end cap intermediates
+            const a = Math.PI / 2 - (Math.PI * i) / 4;
+            capPts.push([p2.x + r * (Math.cos(a) * ux + Math.sin(a) * vx), p2.y + r * (Math.cos(a) * uy + Math.sin(a) * vy)]);
+          }
+          capPts.push([p2.x - r * vx, p2.y - r * vy]);                      // bottom of p2
+          capPts.push([p1.x - r * vx, p1.y - r * vy]);                      // bottom of p1
+          for (let i = 1; i < 4; i++) {                                     // left end cap intermediates (use -ux for outward)
+            const a = -Math.PI / 2 + (Math.PI * i) / 4;
+            capPts.push([p1.x + r * (-Math.cos(a) * ux + Math.sin(a) * vx), p1.y + r * (-Math.cos(a) * uy + Math.sin(a) * vy)]);
+          }
+          groupHulls.set(key, capPts);
+          // Intra-group: individual zones + spring
+          groupNodes.forEach((node) => {
+            const zh: [number, number][] = [
+              [node.x - zoneSize, node.y - zoneSize],
+              [node.x + zoneSize, node.y - zoneSize],
+              [node.x + zoneSize, node.y + zoneSize],
+              [node.x - zoneSize, node.y + zoneSize],
+            ];
+            let minDist = Infinity;
+            let pushDir: [number, number] = [0, 0];
+            for (let i = 0; i < zh.length; i++) {
+              const j = (i + 1) % zh.length;
+              const ax = zh[i][0], ay = zh[i][1];
+              const bx = zh[j][0], by = zh[j][1];
+              const ex2 = bx - ax, ey2 = by - ay;
+              const eLen = Math.sqrt(ex2 * ex2 + ey2 * ey2);
+              if (eLen < 1e-10) continue;
+              const t = Math.max(0, Math.min(1, ((node.x - ax) * ex2 + (node.y - ay) * ey2) / (eLen * eLen)));
+              const ppx = ax + ex2 * t, ppy = ay + ey2 * t;
+              const ddx = node.x - ppx, ddy = node.y - ppy;
+              const d = Math.sqrt(ddx * ddx + ddy * ddy);
+              if (d < minDist) {
+                minDist = d;
+                let nx2 = -ey2 / eLen, ny2 = ex2 / eLen;
+                if (nx2 * (cx - ax) + ny2 * (cy - ay) < 0) { nx2 = -nx2; ny2 = -ny2; }
+                pushDir = [nx2, ny2];
+              }
+            }
+            if (minDist < zoneSize) {
+              const overlap = zoneSize - minDist;
+              const cdx = cx - node.x, cdy = cy - node.y;
+              const cDist = Math.sqrt(cdx * cdx + cdy * cdy) || 1;
+              const bw = Math.min(cDist / zoneSize, 1);
+              const dx2 = (1 - bw) * pushDir[0] + bw * (cdx / cDist);
+              const dy2 = (1 - bw) * pushDir[1] + bw * (cdy / cDist);
+              const dl = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+              const fx = (dx2 / dl) * overlap * strength * alpha;
+              const fy = (dy2 / dl) * overlap * strength * alpha;
+              node.vx += fx;
+              node.vy += fy;
+              node._debug.edgePush = [node._debug.edgePush[0] + fx, node._debug.edgePush[1] + fy];
+            }
+          });
+          const ex2 = p2.x - p1.x, ey2 = p2.y - p1.y;
+          const dist = Math.sqrt(ex2 * ex2 + ey2 * ey2) || 1;
+          const f = (dist - 25) * 0.05 * alpha;
+          p1.vx += (ex2 / dist) * f;
+          p1.vy += (ey2 / dist) * f;
+          p2.vx -= (ex2 / dist) * f;
+          p2.vy -= (ey2 / dist) * f;
+          return;
+        }
+
+        // 1 node: true circle (radius 15)
+        groupCircles.set(key, { cx, cy, radius: 15 });
+
         groupNodes.forEach((node: any) => {
           const dx = node.x - cx;
           const dy = node.y - cy;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          const boundary = groupRadius - 15;
-          if (dist > boundary) {
-            const overlap = dist - boundary;
-            node.vx -= (dx / dist) * overlap * strength * alpha;
-            node.vy -= (dy / dist) * overlap * strength * alpha;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          if (dist > 15) {
+            const overlap = dist - 15;
+            const fx = -(dx / dist) * overlap * strength * alpha;
+            const fy = -(dy / dist) * overlap * strength * alpha;
+            node.vx += fx;
+            node.vy += fy;
+            node._debug.edgePush = [node._debug.edgePush[0] + fx, node._debug.edgePush[1] + fy];
           }
         });
       });
-      const keys = Array.from(groupBounds.keys());
-      for (let i = 0; i < keys.length; i++) {
-        for (let j = i + 1; j < keys.length; j++) {
-          const a = groupBounds.get(keys[i])!;
-          const b = groupBounds.get(keys[j])!;
+
+      // Polygon-polygon contact collision via SAT
+      const satContact = (aPts: [number, number][], bPts: [number, number][], pad = 0) => {
+        const axes: [number, number][] = [];
+        for (const verts of [aPts, bPts]) {
+          for (let i = 0; i < verts.length; i++) {
+            const j = (i + 1) % verts.length;
+            const ex = verts[j][0] - verts[i][0];
+            const ey = verts[j][1] - verts[i][1];
+            const len = Math.sqrt(ex * ex + ey * ey);
+            if (len < 1e-10) continue;
+            axes.push([-ey / len, ex / len]);
+          }
+        }
+        let bestAxis: [number, number] = [0, 1];
+        let minOverlap = Infinity;
+        let pushPositive = false;
+        for (const axis of axes) {
+          let minA = Infinity, maxA = -Infinity;
+          let minB = Infinity, maxB = -Infinity;
+          for (const v of aPts) {
+            const p = v[0] * axis[0] + v[1] * axis[1];
+            if (p < minA) minA = p;
+            if (p > maxA) maxA = p;
+          }
+          for (const v of bPts) {
+            const p = v[0] * axis[0] + v[1] * axis[1];
+            if (p < minB) minB = p;
+            if (p > maxB) maxB = p;
+          }
+          const gap = Math.max(minB - maxA, minA - maxB);
+          if (gap > 0) return null;
+          const t1 = maxA - minB;
+          const t2 = maxB - minA;
+          const overlap = t1 < t2 ? t1 : t2;
+          if (overlap < minOverlap) {
+            minOverlap = overlap;
+            bestAxis = axis;
+            pushPositive = t2 < t1;
+          }
+        }
+        const normal: [number, number] = pushPositive ? bestAxis : [-bestAxis[0], -bestAxis[1]];
+        return { normal, depth: minOverlap + pad };
+      };
+
+      const applyPush = (groupA: any[], groupB: any[], nx: number, ny: number, depth: number) => {
+        const k = colStrength * alpha * 1;
+        const px = nx * depth * k;
+        const py = ny * depth * k;
+        groupA.forEach((n: any) => {
+          n.vx += px; n.vy += py;
+          n._debug.groupPush = [n._debug.groupPush[0] + px, n._debug.groupPush[1] + py];
+        });
+        groupB.forEach((n: any) => {
+          n.vx -= px; n.vy -= py;
+          n._debug.groupPush = [n._debug.groupPush[0] - px, n._debug.groupPush[1] - py];
+        });
+      };
+
+      const hullKeys = Array.from(groupHulls.keys());
+      const circleKeys = Array.from(groupCircles.keys());
+
+      // hull vs hull (SAT)
+      for (let i = 0; i < hullKeys.length; i++) {
+        for (let j = i + 1; j < hullKeys.length; j++) {
+          const result = satContact(groupHulls.get(hullKeys[i])!, groupHulls.get(hullKeys[j])!, 10);
+          if (result) {
+            applyPush(
+              groups.get(hullKeys[i])!,
+              groups.get(hullKeys[j])!,
+              result.normal[0], result.normal[1], result.depth,
+            );
+          }
+        }
+      }
+
+      // hull vs circle
+      for (const hKey of hullKeys) {
+        const hull = groupHulls.get(hKey)!;
+        for (const cKey of circleKeys) {
+          const circ = groupCircles.get(cKey)!;
+          let minDistSq = Infinity;
+          let closestX = 0, closestY = 0;
+          for (let i = 0; i < hull.length; i++) {
+            const j = (i + 1) % hull.length;
+            const ax = hull[i][0], ay = hull[i][1];
+            const bx = hull[j][0], by = hull[j][1];
+            const ex = bx - ax, ey = by - ay;
+            const elen2 = ex * ex + ey * ey;
+            if (elen2 < 1e-10) continue;
+            const t = Math.max(0, Math.min(1, ((circ.cx - ax) * ex + (circ.cy - ay) * ey) / elen2));
+            const ppx = ax + ex * t, ppy = ay + ey * t;
+            const ddx = circ.cx - ppx, ddy = circ.cy - ppy;
+            const d2 = ddx * ddx + ddy * ddy;
+            if (d2 < minDistSq) {
+              minDistSq = d2;
+              closestX = ppx; closestY = ppy;
+            }
+          }
+          const dist = Math.sqrt(minDistSq);
+          if (dist < circ.radius) {
+            const overlap = circ.radius - dist;
+            const nx = dist > 0.01 ? (circ.cx - closestX) / dist : 0;
+            const ny = dist > 0.01 ? (circ.cy - closestY) / dist : 1;
+            applyPush(groups.get(cKey)!, groups.get(hKey)!, nx, ny, overlap);
+          }
+        }
+      }
+
+      // circle vs circle
+      for (let i = 0; i < circleKeys.length; i++) {
+        for (let j = i + 1; j < circleKeys.length; j++) {
+          const a = groupCircles.get(circleKeys[i])!;
+          const b = groupCircles.get(circleKeys[j])!;
           const dx = b.cx - a.cx;
           const dy = b.cy - a.cy;
           const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          const minDist = a.radius + b.radius;
-          if (dist < minDist) {
-            const overlap = minDist - dist;
-            const pushX = (dx / dist) * overlap * strength * alpha;
-            const pushY = (dy / dist) * overlap * strength * alpha;
-            const groupA = groups.get(keys[i])!;
-            const groupB = groups.get(keys[j])!;
-            groupA.forEach((n: any) => { n.vx -= pushX; n.vy -= pushY; });
-            groupB.forEach((n: any) => { n.vx += pushX; n.vy += pushY; });
+          if (dist < a.radius + b.radius) {
+            const overlap = a.radius + b.radius - dist;
+            const nx = dx / dist, ny = dy / dist;
+            applyPush(groups.get(circleKeys[i])!, groups.get(circleKeys[j])!, -nx, -ny, overlap);
+          }
+        }
+      }
+
+      // Inter-group node repulsion (all nodes repel nodes in other groups)
+      if (repelStrength > 0 && nodes.length < 400) {
+        const nodeList = Array.from(groups.values()).flat();
+        for (let i = 0; i < nodeList.length; i++) {
+          const a = nodeList[i];
+          const aKey = (a.data?.folder || "") + "/" + (a.data?.file || "");
+          for (let j = i + 1; j < nodeList.length; j++) {
+            const b = nodeList[j];
+            const bKey = (b.data?.folder || "") + "/" + (b.data?.file || "");
+            if (aKey === bKey) continue;
+            const dx = a.x - b.x, dy = a.y - b.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const f = repelStrength / (dist * dist);
+            const fx = (dx / dist) * f * alpha;
+            const fy = (dy / dist) * f * alpha;
+            a.vx += fx; a.vy += fy;
+            b.vx -= fx; b.vy -= fy;
           }
         }
       }
@@ -378,9 +716,46 @@ function App() {
     return force;
   }
 
-  function crossFileEdgeForce(edges: any[], strength: number) {
+  function crossFileEdgeForce(edges: any[], strength: number, legacy: boolean) {
     let nodeMap: Map<string, any>;
     function force(alpha: number) {
+      if (legacy) {
+        edges.forEach((edge: any) => {
+          const source = typeof edge.source === "string" ? nodeMap.get(edge.source) : edge.source;
+          const target = typeof edge.target === "string" ? nodeMap.get(edge.target) : edge.target;
+          if (!source || !target) return;
+          const sourceFile = source.data?.file;
+          const sourceFolder = source.data?.folder || "";
+          const targetFile = target.data?.file;
+          const targetFolder = target.data?.folder || "";
+          if (!sourceFile || !targetFile) return;
+          const sourceKey = sourceFolder ? `${sourceFolder}/${sourceFile}` : sourceFile;
+          const targetKey = targetFolder ? `${targetFolder}/${targetFile}` : targetFile;
+          if (sourceKey === targetKey) return;
+          const dx = target.x - source.x;
+          const dy = target.y - source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const f = (dist - 30) * strength * alpha;
+          const sfx = (dx / dist) * f;
+          const sfy = (dy / dist) * f;
+          source.vx += sfx;
+          source.vy += sfy;
+          target.vx -= sfx;
+          target.vy -= sfy;
+        });
+        return;
+      }
+
+      const groups = new Map<string, { nodes: any[]; fx: number; fy: number }>();
+      nodeMap.forEach((node) => {
+        const file = node.data?.file;
+        const folder = node.data?.folder || "";
+        if (!file) return;
+        const key = folder ? `${folder}/${file}` : file;
+        if (!groups.has(key)) groups.set(key, { nodes: [], fx: 0, fy: 0 });
+        groups.get(key)!.nodes.push(node);
+      });
+
       edges.forEach((edge: any) => {
         const source = typeof edge.source === "string" ? nodeMap.get(edge.source) : edge.source;
         const target = typeof edge.target === "string" ? nodeMap.get(edge.target) : edge.target;
@@ -394,18 +769,29 @@ function App() {
 
         const sourceKey = sourceFolder ? `${sourceFolder}/${sourceFile}` : sourceFile;
         const targetKey = targetFolder ? `${targetFolder}/${targetFile}` : targetFile;
-        if (sourceKey === targetKey) return;
+        if (sourceKey === targetKey || !groups.has(sourceKey) || !groups.has(targetKey)) return;
 
         const dx = target.x - source.x;
         const dy = target.y - source.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const targetDist = 30;
-        const f = (dist - targetDist) * strength * alpha;
+        const f = (dist - 30) * strength * alpha;
+        const sfx = (dx / dist) * f;
+        const sfy = (dy / dist) * f;
 
-        source.vx += (dx / dist) * f;
-        source.vy += (dy / dist) * f;
-        target.vx -= (dx / dist) * f;
-        target.vy -= (dy / dist) * f;
+        groups.get(sourceKey)!.fx += sfx;
+        groups.get(sourceKey)!.fy += sfy;
+        groups.get(targetKey)!.fx -= sfx;
+        groups.get(targetKey)!.fy -= sfy;
+      });
+
+      groups.forEach((g) => {
+        if (g.nodes.length === 0 || (Math.abs(g.fx) < 1e-10 && Math.abs(g.fy) < 1e-10)) return;
+        const n = g.nodes.length;
+        g.nodes.forEach((node: any) => {
+          node.vx += g.fx / n;
+          node.vy += g.fy / n;
+          node._debug.crossFile = [node._debug.crossFile[0] + g.fx / n, node._debug.crossFile[1] + g.fy / n];
+        });
       });
     }
     force.initialize = (n: any[]) => {
@@ -1330,17 +1716,35 @@ function App() {
     canvas.addEventListener("wheel", handleWheel);
 
     const isGroupingMode = viewMode !== "edges";
+    const isLegacy = viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2";
 
     const simulation = d3
       .forceSimulation(filteredNodes as any)
-      .force("charge", d3.forceManyBody().strength(chargeStrength))
-      .force("x", d3.forceX(0))
-      .force("y", d3.forceY(0))
       .alphaDecay(forcesEnabled ? 0 : alphaDecayValue);
 
+    if (isLegacy) {
+      simulation
+        .force("charge", d3.forceManyBody().strength(chargeStrength))
+        .force("x", d3.forceX(0))
+        .force("y", d3.forceY(0));
+    }
+
+    const boundaryRadius = 600;
+    simulation.force("boundary", (alpha: number) => {
+      filteredNodes.forEach((node: any) => {
+        const d = Math.sqrt(node.x * node.x + node.y * node.y);
+        if (d > boundaryRadius) {
+          const overlap = d - boundaryRadius;
+          const f = overlap * 0.5 * alpha;
+          node.vx -= (node.x / d) * f;
+          node.vy -= (node.y / d) * f;
+        }
+      });
+    });
+
     if (isGroupingMode) {
-      simulation.force("group", groupCohesionForce(groupCohesionStrength));
-      simulation.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength));
+      simulation.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, isLegacy));
+      simulation.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, isLegacy));
       simulation.force("collide", d3.forceCollide(15));
     } else {
       simulation.force(
@@ -1373,6 +1777,15 @@ function App() {
       context.translate(transformRef.current.x, transformRef.current.y);
       context.scale(transformRef.current.k, transformRef.current.k);
 
+      // Draw boundary circle
+      context.beginPath();
+      context.arc(0, 0, boundaryRadius, 0, 2 * Math.PI);
+      context.strokeStyle = "rgba(255, 0, 0, 0.3)";
+      context.lineWidth = 1;
+      context.setLineDash([6, 4]);
+      context.stroke();
+      context.setLineDash([]);
+
       // Draw polygons/circles/boxes/offsets around nodes from the same file
       // Store hull paths for clipping edges inside groups
       const groupHulls = new Map<string, [number, number][]>();
@@ -1389,7 +1802,8 @@ function App() {
         viewMode === "oriented-rect" ||
         viewMode === "oriented-rect-rounded" ||
         viewMode === "oriented-rect-roundpoly" ||
-        viewMode === "oriented-rect-roundpoly2"
+        viewMode === "oriented-rect-roundpoly2" ||
+        viewMode === "poly-solid"
       ) {
         const nodesByFile = new Map<string, any[]>();
         filteredNodes.forEach((node: any) => {
@@ -2206,7 +2620,7 @@ function App() {
               ];
             });
             groupHulls.set(uniqueKey, rectHull2);
-          } else if (viewMode === "oriented-rect-roundpoly") {
+          } else if (viewMode === "oriented-rect-roundpoly" || viewMode === "poly-solid") {
             // Adaptive rounding with Para+ polygons for 3+ nodes
             const nodeRadius = 10;
             const padding = 5;
@@ -2679,7 +3093,8 @@ function App() {
         viewMode === "oriented-rect" ||
         viewMode === "oriented-rect-rounded" ||
         viewMode === "oriented-rect-roundpoly" ||
-        viewMode === "oriented-rect-roundpoly2";
+        viewMode === "oriented-rect-roundpoly2" ||
+        viewMode === "poly-solid";
 
       if (isGroupingMode) {
         // Group edges by file-to-file connections for namespace imports
@@ -3030,28 +3445,6 @@ function App() {
           context.lineWidth = 1;
           context.stroke();
         });
-        const drawGroups = new Map<string, any[]>();
-        filteredNodes.forEach((node: any) => {
-          const file = node.data?.file;
-          const folder = node.data?.folder || "";
-          if (!file) return;
-          const key = folder ? `${folder}/${file}` : file;
-          if (!drawGroups.has(key)) drawGroups.set(key, []);
-          drawGroups.get(key)!.push(node);
-        });
-        drawGroups.forEach((groupNodes) => {
-          if (groupNodes.length === 0) return;
-          const cx = groupNodes.reduce((s: number, n: any) => s + n.x, 0) / groupNodes.length;
-          const cy = groupNodes.reduce((s: number, n: any) => s + n.y, 0) / groupNodes.length;
-          const maxDist = Math.max(...groupNodes.map((n: any) => Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2))) || 1;
-          context.beginPath();
-          context.arc(cx, cy, maxDist + 15, 0, 2 * Math.PI);
-          context.strokeStyle = "rgba(0, 255, 0, 0.3)";
-          context.lineWidth = 1;
-          context.setLineDash([4, 4]);
-          context.stroke();
-          context.setLineDash([]);
-        });
       }
 
       // Draw nodes
@@ -3095,6 +3488,34 @@ function App() {
           context.arc(node.x + 4, node.y - 4, 3, 0, 2 * Math.PI);
           context.fillStyle = "#f97316";
           context.fill();
+        }
+        // Debug: draw force vectors
+        const debugForces: { key: string; vx: number; vy: number; color: string }[] = [
+          { key: "edgePush", vx: node._debug?.edgePush?.[0] || 0, vy: node._debug?.edgePush?.[1] || 0, color: "rgba(0, 200, 0, 0.9)" },
+          { key: "groupPush", vx: node._debug?.groupPush?.[0] || 0, vy: node._debug?.groupPush?.[1] || 0, color: "rgba(0, 100, 255, 0.9)" },
+          { key: "crossFile", vx: node._debug?.crossFile?.[0] || 0, vy: node._debug?.crossFile?.[1] || 0, color: "rgba(255, 150, 0, 0.9)" },
+        ];
+        for (const f of debugForces) {
+          const len = Math.sqrt(f.vx * f.vx + f.vy * f.vy);
+          if (len > 0.01) {
+            const scale = 100;
+            const drawLen = Math.min(len * scale, 40);
+            const nx = f.vx / len, ny = f.vy / len;
+            context.beginPath();
+            context.moveTo(node.x, node.y);
+            context.lineTo(node.x + nx * drawLen, node.y + ny * drawLen);
+            context.strokeStyle = f.color;
+            context.lineWidth = 1.5;
+            context.stroke();
+            const tipX = node.x + nx * drawLen, tipY = node.y + ny * drawLen;
+            const angle = Math.atan2(ny, nx);
+            context.beginPath();
+            context.moveTo(tipX, tipY);
+            context.lineTo(tipX - 5 * Math.cos(angle - 0.4), tipY - 5 * Math.sin(angle - 0.4));
+            context.moveTo(tipX, tipY);
+            context.lineTo(tipX - 5 * Math.cos(angle + 0.4), tipY - 5 * Math.sin(angle + 0.4));
+            context.stroke();
+          }
         }
       });
 
@@ -3302,7 +3723,8 @@ function App() {
         viewMode !== "oriented-rect" &&
         viewMode !== "oriented-rect-rounded" &&
         viewMode !== "oriented-rect-roundpoly" &&
-        viewMode !== "oriented-rect-roundpoly2";
+        viewMode !== "oriented-rect-roundpoly2" &&
+        viewMode !== "poly-solid";
       if (!found && isEdgeMode) {
         for (const edge of filteredEdges) {
           const dx = edge.target.x - edge.source.x;
@@ -3551,32 +3973,50 @@ function App() {
   }, [groupCohesionStrength]);
 
   useEffect(() => {
+    localStorage.setItem("collisionStrength", JSON.stringify(collisionStrength));
+  }, [collisionStrength]);
+
+  useEffect(() => {
+    localStorage.setItem("repelStrength", JSON.stringify(repelStrength));
+  }, [repelStrength]);
+
+  useEffect(() => {
     localStorage.setItem("crossFileEdgeStrength", JSON.stringify(crossFileEdgeStrength));
   }, [crossFileEdgeStrength]);
 
   // Update simulation forces when D3 parameters change
   useEffect(() => {
     if (simulationRef.current) {
-      simulationRef.current.force("charge").strength(chargeStrength);
       const linkForce = simulationRef.current.force("link");
       if (linkForce) {
         (linkForce as any).distance(linkDistance);
       }
       simulationRef.current.alpha(0.3).restart();
     }
-  }, [chargeStrength, linkDistance]);
+  }, [linkDistance]);
 
-  // Update group cohesion strength when parameter changes
+  // Update charge strength for legacy modes
+  useEffect(() => {
+    if (simulationRef.current) {
+      const chargeForce = simulationRef.current.force("charge");
+      if (chargeForce) {
+        (chargeForce as any).strength(chargeStrength);
+        simulationRef.current.alpha(0.3).restart();
+      }
+    }
+  }, [chargeStrength]);
+
+  // Update group cohesion / collision strength when parameters change
   useEffect(() => {
     if (simulationRef.current) {
       const existingGroup = simulationRef.current.force("group");
       if (existingGroup) {
         simulationRef.current.force("group", null);
-        simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength));
+        simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2"));
         simulationRef.current.alpha(1).restart();
       }
     }
-  }, [groupCohesionStrength]);
+  }, [groupCohesionStrength, collisionStrength, repelStrength]);
 
   // Update cross-file edge strength when parameter changes
   useEffect(() => {
@@ -3584,7 +4024,7 @@ function App() {
       const existingCrossFile = simulationRef.current.force("crossFile");
       if (existingCrossFile) {
         simulationRef.current.force("crossFile", null);
-        simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength));
+        simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2"));
         simulationRef.current.alpha(1).restart();
       }
     }
@@ -3594,25 +4034,42 @@ function App() {
   useEffect(() => {
     if (simulationRef.current) {
       const isGroupingMode = viewMode !== "edges";
+      const isLegacy = viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2";
       const existingLink = simulationRef.current.force("link");
       const existingGroup = simulationRef.current.force("group");
       const existingCrossFile = simulationRef.current.force("crossFile");
       const existingCollide = simulationRef.current.force("collide");
+      const existingCharge = simulationRef.current.force("charge");
+      const existingX = simulationRef.current.force("x");
+      const existingY = simulationRef.current.force("y");
       if (isGroupingMode) {
         if (existingLink) simulationRef.current.force("link", null);
         if (!existingGroup) {
-          simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength));
+          simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, isLegacy));
         }
         if (!existingCrossFile) {
-          simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength));
+          simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, isLegacy));
         }
         if (!existingCollide) {
           simulationRef.current.force("collide", d3.forceCollide(15));
+        }
+        if (isLegacy && !existingCharge) {
+          simulationRef.current.force("charge", d3.forceManyBody().strength(chargeStrength));
+          simulationRef.current.force("x", d3.forceX(0));
+          simulationRef.current.force("y", d3.forceY(0));
+        }
+        if (!isLegacy && existingCharge) {
+          simulationRef.current.force("charge", null);
+          simulationRef.current.force("x", null);
+          simulationRef.current.force("y", null);
         }
       } else {
         if (existingGroup) simulationRef.current.force("group", null);
         if (existingCrossFile) simulationRef.current.force("crossFile", null);
         if (existingCollide) simulationRef.current.force("collide", null);
+        if (existingCharge) simulationRef.current.force("charge", null);
+        if (existingX) simulationRef.current.force("x", null);
+        if (existingY) simulationRef.current.force("y", null);
         if (!existingLink) {
           simulationRef.current.force(
             "link",
@@ -3625,7 +4082,7 @@ function App() {
       }
       simulationRef.current.alpha(1).restart();
     }
-  }, [viewMode, filteredEdges, linkDistance, groupCohesionStrength, crossFileEdgeStrength]);
+  }, [viewMode, filteredEdges, linkDistance, groupCohesionStrength, collisionStrength, repelStrength, chargeStrength, crossFileEdgeStrength]);
 
   // Update alpha decay when parameter changes
   useEffect(() => {
@@ -3656,20 +4113,36 @@ function App() {
         (linkForce as any).links(filteredEdges as any);
       }
       const isGroupingMode = viewMode !== "edges";
+      const isLegacy = viewMode === "oriented-rect-roundpoly" || viewMode === "oriented-rect-roundpoly2";
       if (isGroupingMode) {
         simulationRef.current.force("group", null);
-        simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength));
+        simulationRef.current.force("group", groupCohesionForce(groupCohesionStrength, collisionStrength, repelStrength, isLegacy));
         simulationRef.current.force("crossFile", null);
-        simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength));
+        simulationRef.current.force("crossFile", crossFileEdgeForce(filteredEdges as any, crossFileEdgeStrength, isLegacy));
         simulationRef.current.force("collide", null);
         simulationRef.current.force("collide", d3.forceCollide(15));
+        if (isLegacy) {
+          if (!simulationRef.current.force("charge")) {
+            simulationRef.current.force("charge", d3.forceManyBody().strength(chargeStrength));
+            simulationRef.current.force("x", d3.forceX(0));
+            simulationRef.current.force("y", d3.forceY(0));
+          }
+        } else {
+          simulationRef.current.force("charge", null);
+          simulationRef.current.force("x", null);
+          simulationRef.current.force("y", null);
+        }
+      } else {
+        simulationRef.current.force("charge", null);
+        simulationRef.current.force("x", null);
+        simulationRef.current.force("y", null);
       }
       simulationRef.current.alpha(1).restart();
     }
-  }, [filteredNodes, filteredEdges, groupCohesionStrength, crossFileEdgeStrength, viewMode]);
+  }, [filteredNodes, filteredEdges, groupCohesionStrength, collisionStrength, repelStrength, chargeStrength, crossFileEdgeStrength, viewMode]);
 
   return (
-    <div className="h-screen w-screen bg-neutral-900 flex">
+    <div className="h-screen w-screen bg-neutral-900 flex overflow-hidden">
       {/* Sidebar */}
       <div
         className={`bg-neutral-900 overflow-hidden flex flex-col h-full ${sidebarOpen ? "border-r border-neutral-700" : ""}`}
@@ -3874,10 +4347,10 @@ function App() {
 
       {/* Right sidebar */}
       <div
-        className={`bg-neutral-900 overflow-hidden ${rightSidebarOpen ? "border-l border-neutral-700" : ""}`}
+        className={`bg-neutral-900 flex flex-col h-full ${rightSidebarOpen ? "border-l border-neutral-700" : ""}`}
         style={{ width: rightSidebarOpen ? "300px" : "0px" }}
       >
-        <div className="p-4">
+        <div className="p-4 flex-shrink-0">
           <div className="p-2 flex items-center justify-between">
             <h1 className="font-semibold text-neutral-50">Settings</h1>
             <div
@@ -3888,7 +4361,7 @@ function App() {
             </div>
           </div>
         </div>
-        <div className="px-4 pb-4">
+        <div className="px-4 pb-4 flex-1 overflow-y-auto min-h-0">
           <div className="flex justify-end gap-1">
             <Tooltip content="Lock Simulation">
               <button
@@ -3935,8 +4408,7 @@ function App() {
               </button>
             </Tooltip>
           </div>
-        </div>
-        <div className="px-4 pb-4 space-y-4">
+          <div className="space-y-4 mt-4">
           <div>
             <label className="block text-sm text-neutral-400 mb-2">
               View Mode
@@ -4027,6 +4499,12 @@ function App() {
                 currentViewMode={viewMode}
                 onClick={() => setViewMode("oriented-rect-roundpoly2")}
               />
+              <ViewModeButton
+                mode="poly-solid"
+                label="PolySolid"
+                currentViewMode={viewMode}
+                onClick={() => setViewMode("poly-solid")}
+              />
             </div>
           </div>
           <div>
@@ -4093,6 +4571,34 @@ function App() {
           </div>
           <div>
             <label className="block text-sm text-neutral-400 mb-2">
+              Collision Strength
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="5"
+              value={collisionStrength}
+              onChange={(e) => setCollisionStrength(Number(e.target.value))}
+              className="w-full bg-neutral-800 text-neutral-50 rounded px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-400 mb-2">
+              Repel Strength
+            </label>
+            <input
+              type="number"
+              step="0.1"
+              min="0"
+              max="100"
+              value={repelStrength}
+              onChange={(e) => setRepelStrength(Number(e.target.value))}
+              className="w-full bg-neutral-800 text-neutral-50 rounded px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-400 mb-2">
               Cross-File Edge Strength
             </label>
             <input
@@ -4107,6 +4613,7 @@ function App() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }
