@@ -1189,26 +1189,42 @@ function App() {
       ...parsedData.modules.map((m) => m.path),
       ...parsedData.scripts.map((s) => s.path),
     ].sort();
-    return btoa(paths.join("\n"));
+    const str = paths.join("\n");
+    try {
+      return btoa(str);
+    } catch {
+      return btoa(unescape(encodeURIComponent(str)));
+    }
+  }
+
+  function getPolyBlocksStorageKey(): string {
+    const key = getPolyBlocksKey();
+    if (!key) return "";
+    return "polyBlocksPositions_" + key.substring(0, 16);
   }
 
   function savePolyBlocksPositions(nodes: any[]) {
     const key = getPolyBlocksKey();
     if (!key) return;
+    const storageKey = getPolyBlocksStorageKey();
     const positions: Record<string, { x: number; y: number }> = {};
     nodes.forEach((n: any) => { positions[n.id] = { x: n.x, y: n.y }; });
-    localStorage.setItem("polyBlocksPositions", JSON.stringify({ key, positions }));
+    console.log("[polyblocks] save", { storageKey, count: Object.keys(positions).length });
+    localStorage.setItem(storageKey, JSON.stringify({ key, positions }));
   }
 
-  function restorePolyBlocksPositions(nodes: any[]): boolean {
+  function applySavedPositions(nodes: any[]): void {
     const key = getPolyBlocksKey();
-    if (!key) return false;
-    const saved = localStorage.getItem("polyBlocksPositions");
-    if (!saved) return false;
+    console.log("[polyblocks] applySavedPositions", { hasKey: !!key, nodeCount: nodes.length });
+    if (!key) return;
+    const storageKey = getPolyBlocksStorageKey();
+    const saved = localStorage.getItem(storageKey);
+    console.log("[polyblocks] apply: storageKey", storageKey, "found", !!saved);
+    if (!saved) return;
     try {
       const data = JSON.parse(saved);
-      if (data.key !== key) return false;
-      let allFound = true;
+      if (data.key !== key) return;
+      let applied = 0;
       nodes.forEach((n: any) => {
         const pos = data.positions[n.id];
         if (pos) {
@@ -1216,13 +1232,12 @@ function App() {
           n.y = pos.y;
           n.vx = 0;
           n.vy = 0;
-        } else {
-          allFound = false;
+          applied++;
         }
       });
-      return allFound;
-    } catch {
-      return false;
+      console.log("[polyblocks] apply: restored", applied, "of", nodes.length);
+    } catch (e) {
+      console.error("[polyblocks] apply: error", e);
     }
   }
 
@@ -1757,9 +1772,8 @@ function App() {
   const resetGraph = useCallback(() => {
     if (simulationRef.current) {
       if (viewMode === "poly-blocks") {
-        if (!restorePolyBlocksPositions(filteredNodes)) {
-          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
-        }
+        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+        applySavedPositions(filteredNodes);
         rebuildPolyBlocksRects();
         savePolyBlocksPositions(filteredNodes);
       } else {
@@ -1988,17 +2002,15 @@ function App() {
         // Auto-load the most recent directory if it has read permission
         if (sortedDirectories.length > 0) {
           const mostRecent = sortedDirectories[0];
+          setDirectoryHandle(mostRecent.handle);
           try {
-            // Check if we have read permission
             const permission = await mostRecent.handle.queryPermission({
               mode: "read",
             });
             if (permission === "granted") {
-              setDirectoryHandle(mostRecent.handle);
               await loadDirectoryData(mostRecent.handle);
             }
           } catch (err) {
-            // Permission not granted or query failed - silently skip
             console.warn("Permission check failed:", err);
           }
         }
@@ -2187,15 +2199,16 @@ function App() {
     canvas.addEventListener("wheel", handleWheel);
 
     if (viewMode === "poly-blocks") {
-      if (!restorePolyBlocksPositions(filteredNodes)) {
-        const needsInit = filteredNodes.length > 0 && (
-          polyBlocksDataRef.current !== generatedNodes ||
-          Math.abs(filteredNodes[0].x % 40) > 0.1
-        );
-        if (needsInit) {
-          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
-        }
+      const needsInit = filteredNodes.length > 0 && (
+        polyBlocksDataRef.current !== generatedNodes ||
+        Math.abs(filteredNodes[0].x % 40) > 0.1
+      );
+      console.log("[polyblocks] main effect init", { needsInit, nodeCount: filteredNodes.length, polyRefCurrent: polyBlocksDataRef.current === generatedNodes, offGrid: filteredNodes.length > 0 ? Math.abs(filteredNodes[0].x % 40) : 'N/A' });
+      if (needsInit) {
+        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+        console.log("[polyblocks] main effect: init done");
       }
+      applySavedPositions(filteredNodes);
       rebuildPolyBlocksRects();
       savePolyBlocksPositions(filteredNodes);
       polyBlocksDataRef.current = generatedNodes;
@@ -4614,6 +4627,16 @@ function App() {
     viewMode,
   ]);
 
+  // Apply saved poly-blocks positions when data becomes available
+  useEffect(() => {
+    console.log("[polyblocks] dedicated effect", { viewMode, nodeCount: filteredNodes.length, hasParsed: !!parsedData });
+    if (viewMode === "poly-blocks" && filteredNodes.length > 0 && parsedData) {
+      console.log("[polyblocks] dedicated effect: applying");
+      applySavedPositions(filteredNodes);
+      savePolyBlocksPositions(filteredNodes);
+    }
+  }, [parsedData, viewMode, filteredNodes]);
+
   // Handle sidebar resize without re-initializing simulation
   useEffect(() => {
     sidebarOpenRef.current = sidebarOpen;
@@ -4763,15 +4786,14 @@ function App() {
         if (existingX) simulationRef.current.force("x", null);
         if (existingY) simulationRef.current.force("y", null);
         if (existingTwoLevel) simulationRef.current.force("twoLevel", null);
-        if (!restorePolyBlocksPositions(filteredNodes)) {
-          const needsInit = filteredNodes.length > 0 && (
-            polyBlocksDataRef.current !== generatedNodes ||
-            Math.abs(filteredNodes[0].x % 40) > 0.1
-          );
-          if (needsInit) {
-            initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
-          }
+        const needsInit = filteredNodes.length > 0 && (
+          polyBlocksDataRef.current !== generatedNodes ||
+          Math.abs(filteredNodes[0].x % 40) > 0.1
+        );
+        if (needsInit) {
+          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
         }
+        applySavedPositions(filteredNodes);
         rebuildPolyBlocksRects();
         savePolyBlocksPositions(filteredNodes);
         polyBlocksDataRef.current = generatedNodes;
@@ -4871,15 +4893,14 @@ function App() {
         simulationRef.current.force("y", null);
         simulationRef.current.force("twoLevel", null);
         simulationRef.current.force("collide", null);
-        if (!restorePolyBlocksPositions(filteredNodes)) {
-          const needsInit = filteredNodes.length > 0 && (
-            polyBlocksDataRef.current !== generatedNodes ||
-            Math.abs(filteredNodes[0].x % 40) > 0.1
-          );
-          if (needsInit) {
-            initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
-          }
+        const needsInit = filteredNodes.length > 0 && (
+          polyBlocksDataRef.current !== generatedNodes ||
+          Math.abs(filteredNodes[0].x % 40) > 0.1
+        );
+        if (needsInit) {
+          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
         }
+        applySavedPositions(filteredNodes);
         rebuildPolyBlocksRects();
         savePolyBlocksPositions(filteredNodes);
         polyBlocksDataRef.current = generatedNodes;
