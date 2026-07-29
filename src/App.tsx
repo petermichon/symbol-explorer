@@ -326,7 +326,7 @@ function App() {
     | "oriented-rect-roundpoly2"
     | "poly-solid"
     | "poly-blocks"
-  >("oriented-rect-roundpoly");
+  >("poly-blocks");
 
   function groupCohesionForce(strength: number, colStrength: number, repelStrength: number, legacy: boolean) {
     let nodes: any[];
@@ -1183,6 +1183,49 @@ function App() {
     }
   }
 
+  function getPolyBlocksKey(): string {
+    if (!parsedData) return "";
+    const paths = [
+      ...parsedData.modules.map((m) => m.path),
+      ...parsedData.scripts.map((s) => s.path),
+    ].sort();
+    return btoa(paths.join("\n"));
+  }
+
+  function savePolyBlocksPositions(nodes: any[]) {
+    const key = getPolyBlocksKey();
+    if (!key) return;
+    const positions: Record<string, { x: number; y: number }> = {};
+    nodes.forEach((n: any) => { positions[n.id] = { x: n.x, y: n.y }; });
+    localStorage.setItem("polyBlocksPositions", JSON.stringify({ key, positions }));
+  }
+
+  function restorePolyBlocksPositions(nodes: any[]): boolean {
+    const key = getPolyBlocksKey();
+    if (!key) return false;
+    const saved = localStorage.getItem("polyBlocksPositions");
+    if (!saved) return false;
+    try {
+      const data = JSON.parse(saved);
+      if (data.key !== key) return false;
+      let allFound = true;
+      nodes.forEach((n: any) => {
+        const pos = data.positions[n.id];
+        if (pos) {
+          n.x = pos.x;
+          n.y = pos.y;
+          n.vx = 0;
+          n.vy = 0;
+        } else {
+          allFound = false;
+        }
+      });
+      return allFound;
+    } catch {
+      return false;
+    }
+  }
+
   const [customData, setCustomData] = useState<{
     nodes: any[];
     edges: any[];
@@ -1676,7 +1719,10 @@ function App() {
   const resetGraph = useCallback(() => {
     if (simulationRef.current) {
       if (viewMode === "poly-blocks") {
-        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+        if (!restorePolyBlocksPositions(filteredNodes)) {
+          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+        }
+        savePolyBlocksPositions(filteredNodes);
       } else {
         filteredNodes.forEach((node: any) => {
           node.x = (Math.random() - 0.5) * 100;
@@ -2101,14 +2147,17 @@ function App() {
     canvas.addEventListener("wheel", handleWheel);
 
     if (viewMode === "poly-blocks") {
-      const needsInit = filteredNodes.length > 0 && (
-        polyBlocksDataRef.current !== generatedNodes ||
-        Math.abs(filteredNodes[0].x % 40) > 0.1
-      );
-      if (needsInit) {
-        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
-        polyBlocksDataRef.current = generatedNodes;
+      if (!restorePolyBlocksPositions(filteredNodes)) {
+        const needsInit = filteredNodes.length > 0 && (
+          polyBlocksDataRef.current !== generatedNodes ||
+          Math.abs(filteredNodes[0].x % 40) > 0.1
+        );
+        if (needsInit) {
+          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+        }
       }
+      savePolyBlocksPositions(filteredNodes);
+      polyBlocksDataRef.current = generatedNodes;
     }
 
     const isGroupingMode = viewMode !== "edges";
@@ -2173,6 +2222,7 @@ function App() {
               node.x = node._snapTarget.x;
               node.y = node._snapTarget.y;
               node._snapTarget = null;
+              savePolyBlocksPositions(filteredNodes);
             } else {
               node.x += dx * 0.2;
               node.y += dy * 0.2;
@@ -4401,6 +4451,7 @@ function App() {
         draggedNode.fx = null;
         draggedNode.fy = null;
         snapToGrid(draggedNode);
+        if (viewMode === "poly-blocks") savePolyBlocksPositions(filteredNodes);
         draggedNode = null;
         if (!simulationLockedRef.current && simulationRef.current) {
           simulationRef.current.alphaTarget(0);
@@ -4608,14 +4659,17 @@ function App() {
         if (existingX) simulationRef.current.force("x", null);
         if (existingY) simulationRef.current.force("y", null);
         if (existingTwoLevel) simulationRef.current.force("twoLevel", null);
-        const needsInit = filteredNodes.length > 0 && (
-          polyBlocksDataRef.current !== generatedNodes ||
-          Math.abs(filteredNodes[0].x % 40) > 0.1
-        );
-        if (needsInit) {
-          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
-          polyBlocksDataRef.current = generatedNodes;
+        if (!restorePolyBlocksPositions(filteredNodes)) {
+          const needsInit = filteredNodes.length > 0 && (
+            polyBlocksDataRef.current !== generatedNodes ||
+            Math.abs(filteredNodes[0].x % 40) > 0.1
+          );
+          if (needsInit) {
+            initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+          }
         }
+        savePolyBlocksPositions(filteredNodes);
+        polyBlocksDataRef.current = generatedNodes;
       } else if (isGroupingMode) {
         if (existingLink) simulationRef.current.force("link", null);
         if (existingTwoLevel && !isLegacy) {
@@ -4712,14 +4766,17 @@ function App() {
         simulationRef.current.force("y", null);
         simulationRef.current.force("twoLevel", null);
         simulationRef.current.force("collide", null);
-        const needsInit = filteredNodes.length > 0 && (
-          polyBlocksDataRef.current !== generatedNodes ||
-          Math.abs(filteredNodes[0].x % 40) > 0.1
-        );
-        if (needsInit) {
-          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
-          polyBlocksDataRef.current = generatedNodes;
+        if (!restorePolyBlocksPositions(filteredNodes)) {
+          const needsInit = filteredNodes.length > 0 && (
+            polyBlocksDataRef.current !== generatedNodes ||
+            Math.abs(filteredNodes[0].x % 40) > 0.1
+          );
+          if (needsInit) {
+            initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+          }
         }
+        savePolyBlocksPositions(filteredNodes);
+        polyBlocksDataRef.current = generatedNodes;
       } else if (isGroupingMode) {
         if (isLegacy) {
           simulationRef.current.force("group", null);
