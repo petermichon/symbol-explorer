@@ -1183,50 +1183,33 @@ function App() {
     }
   }
 
-  function getPolyBlocksKey(): string {
-    if (!parsedData) return "";
-    const paths = [
-      ...parsedData.modules.map((m) => m.path),
-      ...parsedData.scripts.map((s) => s.path),
-    ].sort();
-    const str = paths.join("\n");
-    try {
-      return btoa(str);
-    } catch {
-      return btoa(unescape(encodeURIComponent(str)));
-    }
+  function getPolyBlocksStorageKey(): string {
+    const id = localStorage.getItem("polyBlocksCurrentProjectId");
+    return "polyBlocksPositions_" + (id || "default");
   }
 
-  function getPolyBlocksStorageKey(): string {
-    const key = getPolyBlocksKey();
-    if (!key) return "";
-    return "polyBlocksPositions_" + key.substring(0, 16);
+  function setCurrentProjectId(id: string) {
+    localStorage.setItem("polyBlocksCurrentProjectId", id);
   }
 
   function savePolyBlocksPositions(nodes: any[]) {
-    const key = getPolyBlocksKey();
-    if (!key) return;
     const storageKey = getPolyBlocksStorageKey();
     const positions: Record<string, { x: number; y: number }> = {};
     nodes.forEach((n: any) => { positions[n.id] = { x: n.x, y: n.y }; });
     console.log("[polyblocks] save", { storageKey, count: Object.keys(positions).length });
-    localStorage.setItem(storageKey, JSON.stringify({ key, positions }));
+    localStorage.setItem(storageKey, JSON.stringify({ positions }));
   }
 
   function applySavedPositions(nodes: any[]): void {
-    const key = getPolyBlocksKey();
-    console.log("[polyblocks] applySavedPositions", { hasKey: !!key, nodeCount: nodes.length });
-    if (!key) return;
     const storageKey = getPolyBlocksStorageKey();
     const saved = localStorage.getItem(storageKey);
     console.log("[polyblocks] apply: storageKey", storageKey, "found", !!saved);
     if (!saved) return;
     try {
       const data = JSON.parse(saved);
-      if (data.key !== key) return;
       let applied = 0;
       nodes.forEach((n: any) => {
-        const pos = data.positions[n.id];
+        const pos = data.positions?.[n.id];
         if (pos) {
           n.x = pos.x;
           n.y = pos.y;
@@ -1887,6 +1870,7 @@ function App() {
         const tx = db.transaction("directories", "readwrite");
         const store = tx.objectStore("directories");
         const id = crypto.randomUUID();
+        setCurrentProjectId(id);
         await store.put({
           id,
           handle: dirHandle,
@@ -2003,6 +1987,7 @@ function App() {
         if (sortedDirectories.length > 0) {
           const mostRecent = sortedDirectories[0];
           setDirectoryHandle(mostRecent.handle);
+          setCurrentProjectId(mostRecent.id);
           try {
             const permission = await mostRecent.handle.queryPermission({
               mode: "read",
@@ -2030,6 +2015,7 @@ function App() {
       try {
         setIsLoading(true);
         setDirectoryHandle(dir.handle);
+        setCurrentProjectId(dir.id);
         await loadDirectoryData(dir.handle);
 
         // Update timestamp to move to top
