@@ -1226,6 +1226,44 @@ function App() {
     }
   }
 
+  function updatePolyBlocksGroupRect(fileKey: string) {
+    const members = filteredNodes.filter((n: any) => {
+      const f = n.data?.file;
+      const d = n.data?.folder || "";
+      const k = f ? (d ? `${d}/${f}` : f) : "";
+      return k === fileKey;
+    });
+    if (members.length === 0) return;
+    const padding = 15;
+    const minX = Math.min(...members.map((n: any) => n.x)) - padding;
+    const maxX = Math.max(...members.map((n: any) => n.x)) + padding;
+    const minY = Math.min(...members.map((n: any) => n.y)) - padding;
+    const maxY = Math.max(...members.map((n: any) => n.y)) + padding;
+    polyBlocksRectsRef.current.rects.set(fileKey, { x0: minX, y0: minY, x1: maxX, y1: maxY });
+  }
+
+  function rebuildPolyBlocksRects() {
+    const rects = polyBlocksRectsRef.current.rects;
+    rects.clear();
+    const groups = new Map<string, any[]>();
+    filteredNodes.forEach((n: any) => {
+      const f = n.data?.file;
+      const d = n.data?.folder || "";
+      const k = f ? (d ? `${d}/${f}` : f) : "";
+      if (!k) return;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(n);
+    });
+    const padding = 15;
+    groups.forEach((members, key) => {
+      const minX = Math.min(...members.map((n: any) => n.x)) - padding;
+      const maxX = Math.max(...members.map((n: any) => n.x)) + padding;
+      const minY = Math.min(...members.map((n: any) => n.y)) - padding;
+      const maxY = Math.max(...members.map((n: any) => n.y)) + padding;
+      rects.set(key, { x0: minX, y0: minY, x1: maxX, y1: maxY });
+    });
+  }
+
   const [customData, setCustomData] = useState<{
     nodes: any[];
     edges: any[];
@@ -1722,6 +1760,7 @@ function App() {
         if (!restorePolyBlocksPositions(filteredNodes)) {
           initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
         }
+        rebuildPolyBlocksRects();
         savePolyBlocksPositions(filteredNodes);
       } else {
         filteredNodes.forEach((node: any) => {
@@ -2122,6 +2161,7 @@ function App() {
     let isPanning = false;
     let panStart = { x: 0, y: 0 };
     let draggedNode: any = null;
+    let draggedGroup: any[] | null = null;
 
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
@@ -2156,6 +2196,7 @@ function App() {
           initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
         }
       }
+      rebuildPolyBlocksRects();
       savePolyBlocksPositions(filteredNodes);
       polyBlocksDataRef.current = generatedNodes;
     }
@@ -2223,6 +2264,10 @@ function App() {
               node.y = node._snapTarget.y;
               node._snapTarget = null;
               savePolyBlocksPositions(filteredNodes);
+              const f = node.data?.file;
+              const d = node.data?.folder || "";
+              const k = f ? (d ? `${d}/${f}` : f) : "";
+              if (k) updatePolyBlocksGroupRect(k);
             } else {
               node.x += dx * 0.2;
               node.y += dy * 0.2;
@@ -4197,6 +4242,16 @@ function App() {
       mousePositionRef.current = { x: mouseX, y: mouseY };
 
       // Handle drag
+      if (draggedGroup) {
+        draggedGroup.forEach((n: any) => {
+          if (n._dragOffset) {
+            n.x = mouseX + n._dragOffset.x;
+            n.y = mouseY + n._dragOffset.y;
+          }
+        });
+        draw();
+        return;
+      }
       if (draggedNode) {
         if (draggedNode._dragOffset) {
           draggedNode.fx = mouseX + draggedNode._dragOffset.x;
@@ -4362,6 +4417,7 @@ function App() {
         draw();
       }
 
+      // Check for node hit → single drag
       for (const node of filteredNodes) {
         const dx = mouseX - node.x;
         const dy = mouseY - node.y;
@@ -4375,6 +4431,31 @@ function App() {
           draggedNode.fx = node.x;
           draggedNode.fy = node.y;
           break;
+        }
+      }
+
+      // Poly-blocks: if no node hit, check for click within a group's treemap rect
+      if (viewMode === "poly-blocks" && !draggedNode) {
+        const rects = polyBlocksRectsRef.current.rects;
+        const pad = 15;
+        for (const [fileKey, r] of rects) {
+          if (mouseX >= r.x0 - pad && mouseX <= r.x1 + pad && mouseY >= r.y0 - pad && mouseY <= r.y1 + pad) {
+            draggedGroup = filteredNodes.filter((n: any) => {
+              const f = n.data?.file;
+              const d = n.data?.folder || "";
+              const k = f ? (d ? `${d}/${f}` : f) : "";
+              return k === fileKey;
+            });
+            if (draggedGroup.length > 0) {
+              draggedGroup.forEach((n: any) => {
+                n._snapTarget = null;
+                n._dragOffset = { x: n.x - mouseX, y: n.y - mouseY };
+              });
+            } else {
+              draggedGroup = null;
+            }
+            break;
+          }
         }
       }
     };
@@ -4447,7 +4528,19 @@ function App() {
 
     const handleMouseUp = () => {
       isPanning = false;
-      if (draggedNode) {
+      if (draggedGroup) {
+        draggedGroup.forEach((n: any) => {
+          n._dragOffset = undefined;
+          snapToGrid(n);
+        });
+        if (viewMode === "poly-blocks") savePolyBlocksPositions(filteredNodes);
+        draggedGroup = null;
+        draggedNode = null;
+        if (!simulationLockedRef.current && simulationRef.current) {
+          simulationRef.current.alphaTarget(0);
+          restartSim();
+        }
+      } else if (draggedNode) {
         draggedNode.fx = null;
         draggedNode.fy = null;
         snapToGrid(draggedNode);
@@ -4467,7 +4560,18 @@ function App() {
       isPanning = false;
       hoveredNodeRef.current = null;
       setHoveredEdges([]);
-      if (draggedNode) {
+      if (draggedGroup) {
+        draggedGroup.forEach((n: any) => {
+          n._dragOffset = undefined;
+          snapToGrid(n);
+        });
+        draggedGroup = null;
+        draggedNode = null;
+        restartSim();
+        if (!simulationLockedRef.current && simulationRef.current) {
+          simulationRef.current.alphaTarget(0);
+        }
+      } else if (draggedNode) {
         draggedNode.fx = null;
         draggedNode.fy = null;
         snapToGrid(draggedNode);
@@ -4668,6 +4772,7 @@ function App() {
             initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
           }
         }
+        rebuildPolyBlocksRects();
         savePolyBlocksPositions(filteredNodes);
         polyBlocksDataRef.current = generatedNodes;
       } else if (isGroupingMode) {
@@ -4775,6 +4880,7 @@ function App() {
             initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
           }
         }
+        rebuildPolyBlocksRects();
         savePolyBlocksPositions(filteredNodes);
         polyBlocksDataRef.current = generatedNodes;
       } else if (isGroupingMode) {
