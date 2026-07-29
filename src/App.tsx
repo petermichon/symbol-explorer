@@ -326,7 +326,7 @@ function App() {
     | "oriented-rect-roundpoly2"
     | "poly-solid"
     | "poly-blocks"
-  >("poly-blocks");
+  >("oriented-rect-roundpoly");
 
   function groupCohesionForce(strength: number, colStrength: number, repelStrength: number, legacy: boolean) {
     let nodes: any[];
