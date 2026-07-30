@@ -109,6 +109,151 @@ if (constantsModule) {
   if (timeout) assertEqual(timeout.isExport, true, "TIMEOUT is marked as export");
 }
 
+// --- Test: config.ts re-exports from constants.ts ---
+const configModule = data.modules.find((m) => m.id.endsWith("config.ts"));
+assert(!!configModule, "config.ts module exists");
+// config.ts has export { API_URL, MAX_RETRIES } — re-exports, not declarations, so 0 symbols
+assertEqual(configModule.symbols.length, 0, "config.ts has 0 symbols (it only re-exports)");
+const configImport = data.imports.find((i) => i.source.endsWith("config.ts"));
+assert(!!configImport, "config.ts has an import");
+if (configImport) {
+  assertEqual(configImport.symbols?.length, 2, "config.ts import has 2 symbols");
+  assertIncludes(configImport.symbols || [], "API_URL", "config.ts imports API_URL");
+  assertIncludes(configImport.symbols || [], "MAX_RETRIES", "config.ts imports MAX_RETRIES");
+}
+
+// --- Test: import-test/B.ts (specific named import) ---
+const bModule = data.modules.find((m) => m.id.endsWith("B.ts"));
+assert(!!bModule, "B.ts module exists");
+const bImport = data.imports.find((i) => i.source.endsWith("B.ts"));
+assert(!!bImport, "B.ts has an import");
+if (bImport) {
+  assertEqual(bImport.symbols?.length, 1, "B.ts imports exactly 1 symbol");
+  assertEqual(bImport.symbols?.[0], "MY_CONSTANT", "B.ts imports MY_CONSTANT");
+}
+// B's useConstant should NOT be connected to other A.ts exports
+const useConstNode = graph.nodes.find((n: any) => n.id.endsWith(".useConstant"));
+const myConstNode = graph.nodes.find((n: any) => n.id.endsWith("A.MY_CONSTANT"));
+if (useConstNode && myConstNode) {
+  assert(!!graph.edges.find((e: any) => e.source === useConstNode.id && e.target === myConstNode.id), "edge useConstant -> MY_CONSTANT");
+}
+
+// --- Test: import-test/C.ts (wildcard/namespace import) ---
+const cImport = data.imports.find((i) => i.source.endsWith("C.ts"));
+assert(!!cImport, "C.ts has an import");
+if (cImport) {
+  assertEqual(cImport.type, "wildcard", "C.ts import is wildcard (namespace)");
+  assert(!cImport.symbols, "C.ts import has no specific symbols (wildcard)");
+}
+const useModuleNode = graph.nodes.find((n: any) => n.id.endsWith(".useModule"));
+if (useModuleNode && myConstNode) {
+  assert(!!graph.edges.find((e: any) => e.source === useModuleNode.id && e.target === myConstNode.id), "edge useModule -> MY_CONSTANT (wildcard)");
+}
+
+// --- Test: auth/index.ts (wildcard import) ---
+const authImport = data.imports.find((i) => i.source.endsWith("auth/index.ts"));
+assert(!!authImport, "auth/index.ts has an import");
+if (authImport) {
+  assertEqual(authImport.type, "wildcard", "auth/index.ts import is wildcard");
+}
+const authNode = graph.nodes.find((n: any) => n.id.endsWith(".checkAuth"));
+const authGetToken = graph.nodes.find((n: any) => n.id.endsWith("auth-get.token"));
+if (authNode && authGetToken) {
+  assert(!!graph.edges.find((e: any) => e.source === authNode.id && e.target === authGetToken.id), "edge checkAuth -> token (wildcard connects all exports)");
+}
+
+// --- Test: folder-a/unique.ts (import with .ts extension) ---
+const folderAImport = data.imports.find((i) => i.source.endsWith("folder-a/unique.ts"));
+assert(!!folderAImport, "folder-a/unique.ts has an import");
+if (folderAImport) {
+  assertEqual(folderAImport.symbols?.length, 1, "folder-a/unique.ts imports exactly 1 symbol");
+  assertEqual(folderAImport.symbols?.[0], "uselessValue", "folder-a/unique.ts imports uselessValue");
+  assert(folderAImport.target.endsWith("useless.ts"), "folder-a/unique.ts target resolves to useless.ts");
+}
+
+// --- Test: test-file.ts (import with .ts extension + namespace) ---
+const testFileImport = data.imports.find((i) => i.source.endsWith("test-file.ts"));
+assert(!!testFileImport, "test-file.ts has an import");
+if (testFileImport) {
+  assertEqual(testFileImport.type, "wildcard", "test-file.ts import is wildcard (namespace)");
+}
+
+// --- Test: main.ts (combined named + namespace imports) ---
+const mainImports = data.imports.filter((i) => i.source.endsWith("main.ts"));
+assert(mainImports.length >= 4, `main.ts has at least 4 imports (got ${mainImports.length})`);
+// Check main.ts imports resolve to the right targets
+if (mainImports.length > 0) {
+  const utilsTargets = mainImports.filter((i) => i.target.endsWith("utils/utils.ts"));
+  assert(utilsTargets.length >= 1, "main.ts imports from utils/utils.ts (at least 1)");
+  const typesTargets = mainImports.filter((i) => i.target.endsWith("types/index.ts"));
+  assert(typesTargets.length >= 1, "main.ts imports from types/index.ts (at least 1)");
+}
+
+// --- Test: intermediate.ts imports from base.ts ---
+const intermediateImport = data.imports.find((i) => i.source.endsWith("intermediate.ts"));
+assert(!!intermediateImport, "intermediate.ts has an import");
+if (intermediateImport) {
+  assertEqual(intermediateImport.symbols?.length, 1, "intermediate.ts imports exactly 1 symbol");
+  assertEqual(intermediateImport.symbols?.[0], "BASE_VALUE", "intermediate.ts imports BASE_VALUE");
+}
+
+// --- Test: empty-file.ts (no symbols) ---
+const emptyScript = data.scripts.find((s) => s.id.endsWith("empty-file.ts"));
+assert(!!emptyScript, "empty-file.ts is a script (not a module)");
+assertEqual(emptyScript.symbols.length, 0, "empty-file.ts has 0 symbols");
+
+// --- Test: no-exports/no-exports.ts (no exports) ---
+const noExportScript = data.scripts.find((s) => s.id.endsWith("no-exports.ts"));
+assert(!!noExportScript, "no-exports.ts is a script (not a module)");
+assertEqual(noExportScript.symbols.length, 2, "no-exports.ts has 2 symbols (internalValue, internalFunction)");
+if (noExportScript) {
+  const internalVal = noExportScript.symbols.find((s) => s.name === "internalValue");
+  const internalFn = noExportScript.symbols.find((s) => s.name === "internalFunction");
+  assert(!!internalVal, "internalValue symbol exists");
+  assert(!!internalFn, "internalFunction symbol exists");
+  if (internalVal) assertEqual(internalVal.isExport, false, "internalValue is not marked as export");
+  if (internalFn) assertEqual(internalFn.isExport, false, "internalFunction is not marked as export");
+}
+
+// --- Test: internal.ts (type + export) ---
+const internalModule = data.modules.find((m) => m.id.endsWith("internal.ts"));
+assert(!!internalModule, "internal.ts is a module");
+if (internalModule) {
+  const defaultStatus = internalModule.symbols.find((s) => s.name === "DEFAULT_STATUS");
+  assert(!!defaultStatus, "DEFAULT_STATUS symbol exists in internal.ts");
+  if (defaultStatus) assertEqual(defaultStatus.type, "variable", "DEFAULT_STATUS is type variable");
+}
+
+// --- Test: types/ interfaces ---
+const userType = data.modules.find((m) => m.id.endsWith("types/index.ts"));
+assert(!!userType, "types/index.ts module exists");
+if (userType) {
+  const userIface = userType.symbols.find((s) => s.name === "User");
+  assert(!!userIface, "User interface exists");
+  if (userIface) assertEqual(userIface.isExport, true, "User is marked as export");
+}
+const userModelModule = data.modules.find((m) => m.id.endsWith("models/user.ts"));
+assert(!!userModelModule, "models/user.ts module exists");
+if (userModelModule) {
+  const userModel = userModelModule.symbols.find((s) => s.name === "UserModel");
+  assert(!!userModel, "UserModel interface exists");
+  if (userModel) assertEqual(userModel.isExport, true, "UserModel is marked as export");
+}
+
+// --- Test: dynamic imports ---
+const hardcodedDynamicImport = data.imports.find((i) => i.source.endsWith("dynamic/dynamic-imports.ts") && i.type === "dynamic");
+assert(!!hardcodedDynamicImport, "dynamic/dynamic-imports.ts has a dynamic import");
+
+const topLevelDynamicImport = data.imports.find((i) => i.source.endsWith("top-level-dynamic/top-level.ts") && i.type === "dynamic");
+assert(!!topLevelDynamicImport, "top-level-dynamic/top-level.ts has a dynamic import");
+
+// --- Test: .ts extension in imports ---
+const folderAImportTs = data.imports.find((i) => i.source.endsWith("folder-a/unique.ts"));
+assert(!!folderAImportTs, "folder-a/unique.ts import exists");
+if (folderAImportTs) {
+  assert(folderAImportTs.target.endsWith("useless.ts"), "folder-a/unique.ts target resolves correctly with .ts extension");
+}
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
