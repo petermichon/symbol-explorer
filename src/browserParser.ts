@@ -10,6 +10,7 @@ export interface ImportData {
   target: string;
   type: "import" | "wildcard" | "re-export" | "dynamic";
   containingFunction?: string;
+  symbols?: string[];
 }
 
 export interface Symbol {
@@ -842,6 +843,7 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
       imports: fileImports,
       wildcardImports,
       dynamicImports,
+      importMap,
     } = extractImports(file.content);
     const dirPath = file.path.split("/").slice(0, -1).join("/");
 
@@ -865,10 +867,14 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
             ? resolvedPath
             : `${resolvedPath}.ts`;
 
+        const importedSymbols = importMap.get(importPath);
+        const isWildcard = wildcardImports.includes(importPath);
+
         imports.push({
           source: file.path,
           target: targetPath,
-          type: wildcardImports.includes(importPath) ? "wildcard" : "import",
+          type: isWildcard ? "wildcard" : "import",
+          symbols: isWildcard || !importedSymbols ? undefined : importedSymbols,
         });
       }
     });
@@ -980,8 +986,13 @@ export function buildGraphFromMinimal(data: ParsedData): {
     const sourceSymbols = moduleToSymbols.get(importData.source);
     if (!sourceSymbols) return;
 
+    const isWildcard = importData.type === "wildcard" || !importData.symbols;
+    const symbolsToConnect = isWildcard
+      ? targetExports
+      : targetExports.filter((s) => importData.symbols!.includes(s.name));
+
     sourceSymbols.forEach((sourceSymbol) => {
-      targetExports.forEach((targetSymbol) => {
+      symbolsToConnect.forEach((targetSymbol) => {
         const edgeKey = `${sourceSymbol.id}-${targetSymbol.id}`;
         if (!edgeKeyCount.has(edgeKey)) {
           edges.push({
@@ -989,8 +1000,7 @@ export function buildGraphFromMinimal(data: ParsedData): {
             source: sourceSymbol.id,
             target: targetSymbol.id,
             type: importData.type,
-            label:
-              importData.type === "wildcard" ? "namespace import" : "import",
+            label: isWildcard ? "namespace import" : "import",
           });
           edgeKeyCount.set(edgeKey, 1);
         }
