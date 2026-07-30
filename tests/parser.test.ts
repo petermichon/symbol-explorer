@@ -240,12 +240,61 @@ if (userModelModule) {
   if (userModel) assertEqual(userModel.isExport, true, "UserModel is marked as export");
 }
 
-// --- Test: dynamic imports ---
+// --- Test: dynamic imports (string literal) ---
 const hardcodedDynamicImport = data.imports.find((i) => i.source.endsWith("dynamic/dynamic-imports.ts") && i.type === "dynamic");
-assert(!!hardcodedDynamicImport, "dynamic/dynamic-imports.ts has a dynamic import");
+assert(!!hardcodedDynamicImport, "dynamic/dynamic-imports.ts has a dynamic import (string literal)");
 
 const topLevelDynamicImport = data.imports.find((i) => i.source.endsWith("top-level-dynamic/top-level.ts") && i.type === "dynamic");
-assert(!!topLevelDynamicImport, "top-level-dynamic/top-level.ts has a dynamic import");
+assert(!!topLevelDynamicImport, "top-level-dynamic/top-level.ts has a dynamic import (string literal at top level)");
+
+// --- Test: unknown dynamic imports (variable-based, non-string-literal) ---
+// These use import(variable) and should NOT have import edges.
+// Instead they should have hasUnknownDynamicImport: true on the containing function.
+const isolatedHardcoded = data.modules.find((m) => m.id.endsWith("dynamic-isolated/hardcoded.ts"));
+assert(!!isolatedHardcoded, "dynamic-isolated/hardcoded.ts module exists");
+
+const isolatedConstant = data.modules.find((m) => m.id.endsWith("dynamic-isolated/constant-import.ts"));
+assert(!!isolatedConstant, "dynamic-isolated/constant-import.ts module exists");
+
+const isolatedVariable = data.modules.find((m) => m.id.endsWith("dynamic-isolated/variable.ts"));
+assert(!!isolatedVariable, "dynamic-isolated/variable.ts module exists");
+
+// isolated-hardcoded uses import('../useless') a STRING LITERAL → should have an edge, NOT unknown
+const hardcodedDynamic = data.imports.find((i) => i.source.endsWith("dynamic-isolated/hardcoded.ts") && i.type === "dynamic");
+assert(!!hardcodedDynamic, "hardcoded.ts has a dynamic import edge (it uses a string literal)");
+if (isolatedHardcoded) {
+  const fn = isolatedHardcoded.symbols.find((s) => s.name === "testDynamicImportHardcoded");
+  if (fn) assert(!fn.hasUnknownDynamicImport, "hardcoded.ts uses string literal, NOT unknown");
+}
+
+// isolated-constant uses import(HARDCODED_PATH) — a VARIABLE → should NOT have edge, should be unknown
+const constantDynamicImport = data.imports.find(
+  (i) => i.source.endsWith("dynamic-isolated/constant-import.ts") && i.type === "dynamic",
+);
+assert(!constantDynamicImport, "constant-import.ts has NO dynamic import edge (variable-based)");
+if (isolatedConstant) {
+  const fn = isolatedConstant.symbols.find((s) => s.name === "testDynamicImportConstant");
+  assert(!!fn, "testDynamicImportConstant symbol exists");
+  if (fn) assertEqual(fn.hasUnknownDynamicImport, true, "testDynamicImportConstant has unknown dynamic import");
+}
+
+// isolated-variable uses import(path) — a VARIABLE → should NOT have edge, should be unknown
+const variableDynamicImport = data.imports.find(
+  (i) => i.source.endsWith("dynamic-isolated/variable.ts") && i.type === "dynamic",
+);
+assert(!variableDynamicImport, "variable.ts has NO dynamic import edge (variable-based)");
+if (isolatedVariable) {
+  const fn = isolatedVariable.symbols.find((s) => s.name === "testDynamicImportVariable");
+  assert(!!fn, "testDynamicImportVariable symbol exists");
+  if (fn) assertEqual(fn.hasUnknownDynamicImport, true, "testDynamicImportVariable has unknown dynamic import");
+}
+
+// String-literal dynamic imports should NOT have unknownDynamicImport
+const topLevelModule = data.modules.find((m) => m.id.endsWith("top-level-dynamic/top-level.ts"));
+if (topLevelModule) {
+  const helperResult = topLevelModule.symbols.find((s) => s.name === "helperResult");
+  if (helperResult) assert(!helperResult.hasUnknownDynamicImport, "string-literal dynamic import does NOT have unknown flag");
+}
 
 // --- Test: .ts extension in imports ---
 const folderAImportTs = data.imports.find((i) => i.source.endsWith("folder-a/unique.ts"));

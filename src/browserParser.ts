@@ -921,6 +921,25 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
         });
       }
     });
+
+    // Mark symbols with unknown (non-string-literal) dynamic imports
+    const unknownDynamicImports = dynamicImports.filter((d) => !d.isStringLiteral);
+    unknownDynamicImports.forEach((dynamicImport) => {
+      if (dynamicImport.containingFunction) {
+        const sourceSymbol = symbols.find(
+          (s) => s.name === dynamicImport.containingFunction,
+        );
+        if (sourceSymbol) {
+          sourceSymbol.hasUnknownDynamicImport = true;
+        }
+      } else {
+        symbols.forEach((symbol) => {
+          if (symbol.isExport) {
+            symbol.hasUnknownDynamicImport = true;
+          }
+        });
+      }
+    });
   });
 
   return { modules, scripts, imports };
