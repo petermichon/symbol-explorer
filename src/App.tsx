@@ -1189,25 +1189,31 @@ function App() {
   }
 
   function setCurrentProjectId(id: string) {
+    console.log("[uuid] setCurrentProjectId", id);
     localStorage.setItem("polyBlocksCurrentProjectId", id);
   }
+
+
 
   function savePolyBlocksPositions(nodes: any[]) {
     const storageKey = getPolyBlocksStorageKey();
     const positions: Record<string, { x: number; y: number }> = {};
     nodes.forEach((n: any) => { positions[n.id] = { x: n.x, y: n.y }; });
-    console.log("[polyblocks] save", { storageKey, count: Object.keys(positions).length });
     localStorage.setItem(storageKey, JSON.stringify({ positions }));
+    console.log("[pos] saved", Object.keys(positions).length, "for", storageKey);
   }
 
   function applySavedPositions(nodes: any[]): void {
     const storageKey = getPolyBlocksStorageKey();
     const saved = localStorage.getItem(storageKey);
-    console.log("[polyblocks] apply: storageKey", storageKey, "found", !!saved);
-    if (!saved) return;
+    console.log("[uuid] loading positions for:", storageKey);
+    if (!saved) {
+      console.log("[pos] no saved positions for", storageKey);
+      return;
+    }
     try {
       const data = JSON.parse(saved);
-      let applied = 0;
+      let count = 0;
       nodes.forEach((n: any) => {
         const pos = data.positions?.[n.id];
         if (pos) {
@@ -1215,13 +1221,11 @@ function App() {
           n.y = pos.y;
           n.vx = 0;
           n.vy = 0;
-          applied++;
+          count++;
         }
       });
-      console.log("[polyblocks] apply: restored", applied, "of", nodes.length);
-    } catch (e) {
-      console.error("[polyblocks] apply: error", e);
-    }
+      console.log("[pos] restored", count, "of", nodes.length, "nodes for", storageKey);
+    } catch (e) { console.error("[pos] error", e); }
   }
 
   function updatePolyBlocksGroupRect(fileKey: string) {
@@ -1756,9 +1760,7 @@ function App() {
     if (simulationRef.current) {
       if (viewMode === "poly-blocks") {
         initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
-        applySavedPositions(filteredNodes);
         rebuildPolyBlocksRects();
-        savePolyBlocksPositions(filteredNodes);
       } else {
         filteredNodes.forEach((node: any) => {
           node.x = (Math.random() - 0.5) * 100;
@@ -2189,14 +2191,10 @@ function App() {
         polyBlocksDataRef.current !== generatedNodes ||
         Math.abs(filteredNodes[0].x % 40) > 0.1
       );
-      console.log("[polyblocks] main effect init", { needsInit, nodeCount: filteredNodes.length, polyRefCurrent: polyBlocksDataRef.current === generatedNodes, offGrid: filteredNodes.length > 0 ? Math.abs(filteredNodes[0].x % 40) : 'N/A' });
       if (needsInit) {
         initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
-        console.log("[polyblocks] main effect: init done");
       }
-      applySavedPositions(filteredNodes);
       rebuildPolyBlocksRects();
-      savePolyBlocksPositions(filteredNodes);
       polyBlocksDataRef.current = generatedNodes;
     }
 
@@ -4615,9 +4613,7 @@ function App() {
 
   // Apply saved poly-blocks positions when data becomes available
   useEffect(() => {
-    console.log("[polyblocks] dedicated effect", { viewMode, nodeCount: filteredNodes.length, hasParsed: !!parsedData });
     if (viewMode === "poly-blocks" && filteredNodes.length > 0 && parsedData) {
-      console.log("[polyblocks] dedicated effect: applying");
       applySavedPositions(filteredNodes);
       savePolyBlocksPositions(filteredNodes);
     }
@@ -4781,7 +4777,6 @@ function App() {
         }
         applySavedPositions(filteredNodes);
         rebuildPolyBlocksRects();
-        savePolyBlocksPositions(filteredNodes);
         polyBlocksDataRef.current = generatedNodes;
       } else if (isGroupingMode) {
         if (existingLink) simulationRef.current.force("link", null);
@@ -4888,7 +4883,6 @@ function App() {
         }
         applySavedPositions(filteredNodes);
         rebuildPolyBlocksRects();
-        savePolyBlocksPositions(filteredNodes);
         polyBlocksDataRef.current = generatedNodes;
       } else if (isGroupingMode) {
         if (isLegacy) {
