@@ -368,6 +368,18 @@ export function extractSymbolsFromFile(
         folder,
         isExport: true,
       });
+    } else if (
+      ts.isExportDeclaration(node) &&
+      !node.moduleSpecifier &&
+      node.exportClause &&
+      ts.isNamedExports(node.exportClause)
+    ) {
+      node.exportClause.elements.forEach((element) => {
+        const existing = symbols.find((s) => s.name === element.name.text);
+        if (existing) {
+          existing.isExport = true;
+        }
+      });
     }
 
     ts.forEachChild(node, visit);
