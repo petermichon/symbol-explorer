@@ -3813,17 +3813,20 @@ function App() {
           color: string,
           width: number,
           alpha: number,
+          dashed: boolean = false,
         ) => {
-          const key = `${p1.x},${p1.y}->${p2.x},${p2.y}`;
+          const key = `${p1.x},${p1.y}->${p2.x},${p2.y}${dashed ? "|dashed" : ""}`;
           if (strokedSegments.has(key)) return;
           strokedSegments.add(key);
           context.beginPath();
           context.moveTo(p1.x, p1.y);
           context.lineTo(p2.x, p2.y);
+          context.setLineDash(dashed ? [4, 4] : []);
           context.strokeStyle = color;
           context.lineWidth = width;
           context.globalAlpha = alpha;
           context.stroke();
+          context.setLineDash([]);
           context.globalAlpha = 1;
         };
 
@@ -3872,7 +3875,11 @@ function App() {
             processedEdges.add(edge.id);
           }
           // Named imports: source file -> target symbol (not wildcard, not symbol-level)
-          else if (edge.type === "import" || edge.type === "re-export") {
+          else if (
+            edge.type === "import" ||
+            edge.type === "type" ||
+            edge.type === "re-export"
+          ) {
             namedImportEdges.push(edge);
             processedEdges.add(edge.id);
           }
@@ -3928,7 +3935,9 @@ function App() {
             const edgeKey = `${sourceFile}||${targetFile}`;
             const label = connection.types.has("wildcard")
               ? "namespace import"
-              : Array.from(connection.types).join(", ");
+              : connection.types.has("dynamic")
+                ? "dynamic import"
+                : Array.from(connection.types).join(", ");
 
             // Route through intermediate barrels (re-export pass-through)
             const points: { x: number; y: number }[] = [
@@ -4027,6 +4036,7 @@ function App() {
           const namedColor = colorScale(
             folderMap.get(edge.source.id) || "root",
           ) as string;
+          const isTypeOnly = edge.type === "type";
           const isOutgoingFromHovered =
             hoveredFileKey && sourceKey === hoveredFileKey;
           const isOutgoingFromSelected =
@@ -4045,7 +4055,7 @@ function App() {
               ty: points[i + 1].y,
               label: i === 0 ? edge.label : "",
             });
-            strokeSegment(points[i], points[i + 1], namedColor, 2, namedAlpha);
+            strokeSegment(points[i], points[i + 1], namedColor, 2, namedAlpha, isTypeOnly);
           }
         });
 

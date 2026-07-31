@@ -8,7 +8,7 @@ export interface FileData {
 export interface ImportData {
   source: string;
   target: string;
-  type: "import" | "wildcard" | "re-export" | "dynamic";
+  type: "import" | "wildcard" | "type" | "re-export" | "dynamic";
   containingFunction?: string;
   symbols?: string[];
 }
@@ -91,7 +91,7 @@ export interface SymbolEdge {
   target: string;
   sourceFile: string;
   targetFile: string;
-  type: "import" | "wildcard" | "re-export" | "intra-file" | "dynamic";
+  type: "import" | "wildcard" | "type" | "re-export" | "intra-file" | "dynamic";
   label: string;
   sourceSymbolType?: "function" | "module";
 }
@@ -110,6 +110,7 @@ export function extractImports(content: string): {
   imports: string[];
   symbols: string[];
   wildcardImports: string[];
+  typeOnlyImports: string[];
   importMap: Map<string, string[]>;
   reExports: { module: string; symbols: string[] }[];
   dynamicImports: {
@@ -127,6 +128,7 @@ export function extractImports(content: string): {
   const imports: string[] = [];
   const symbols: string[] = [];
   const wildcardImports: string[] = [];
+  const typeOnlyImports: string[] = [];
   const importMap = new Map<string, string[]>();
   const reExports: { module: string; symbols: string[] }[] = [];
   const dynamicImports: {
@@ -152,6 +154,11 @@ export function extractImports(content: string): {
         .getText()
         .replace(/['"]/g, "");
       imports.push(moduleSpecifier);
+
+      // Type-only imports (import type { ... }) are erased at runtime
+      if (node.importClause?.isTypeOnly) {
+        typeOnlyImports.push(moduleSpecifier);
+      }
 
       if (node.importClause && node.importClause.namedBindings) {
         if (ts.isNamedImports(node.importClause.namedBindings)) {
@@ -238,6 +245,7 @@ export function extractImports(content: string): {
     imports,
     symbols,
     wildcardImports,
+    typeOnlyImports,
     importMap,
     reExports,
     dynamicImports,
@@ -842,6 +850,7 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
     const {
       imports: fileImports,
       wildcardImports,
+      typeOnlyImports,
       dynamicImports,
       importMap,
       reExports,
@@ -894,11 +903,12 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
 
         const importedSymbols = importMap.get(importPath);
         const isWildcard = wildcardImports.includes(importPath);
+        const isTypeOnly = !isWildcard && typeOnlyImports.includes(importPath);
 
         imports.push({
           source: file.path,
           target: targetPath,
-          type: isWildcard ? "wildcard" : "import",
+          type: isWildcard ? "wildcard" : isTypeOnly ? "type" : "import",
           symbols: isWildcard || !importedSymbols ? undefined : importedSymbols,
         });
       }
@@ -1144,12 +1154,19 @@ export function buildGraphFromMinimal(data: ParsedData): {
       symbolsToConnect.forEach(({ symbol: targetSymbol, via }) => {
         const edgeKey = `${sourceSymbol.id}-${targetSymbol.id}`;
         if (!edgeKeyCount.has(edgeKey)) {
+          const edgeType = importData.type;
           edges.push({
             id: `e-${edgeKey}`,
             source: sourceSymbol.id,
             target: targetSymbol.id,
-            type: importData.type,
-            label: isWildcard ? "namespace import" : "import",
+            type: edgeType,
+            label: edgeType === "wildcard"
+              ? "namespace import"
+              : edgeType === "type"
+                ? "type-only import"
+                : edgeType === "dynamic"
+                  ? "dynamic import"
+                  : "import",
             ...(via.length > 0 ? { via } : {}),
           });
           edgeKeyCount.set(edgeKey, 1);

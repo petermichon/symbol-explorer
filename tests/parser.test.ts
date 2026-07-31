@@ -430,6 +430,25 @@ if (useBarrelNode && valueBNode) {
   assert(!!graph.edges.find((e: any) => e.source === useBarrelNode.id && e.target === valueBNode.id), "edge useBarrel -> valueB (re-export without .ts)");
 }
 
+// --- Test: type-only import (import type) ---
+const typeOnlyImport = data.imports.find((i) => i.source.endsWith("type-only/uses-types.ts"));
+assert(!!typeOnlyImport, "type-only/uses-types.ts has an import");
+if (typeOnlyImport) {
+  assertEqual(typeOnlyImport.type, "type", "type-only import is categorized as 'type'");
+  assertEqual(typeOnlyImport.symbols?.length, 1, "type-only/uses-types.ts imports exactly 1 symbol");
+  assertEqual(typeOnlyImport.symbols?.[0], "User", "type-only/uses-types.ts imports User");
+}
+const getUserNameNode = graph.nodes.find((n: any) => n.id.endsWith("type-only/uses-types.ts.getUserName"));
+const userTypeOnlyNode = graph.nodes.find((n: any) => n.id.endsWith("types/index.ts.User"));
+if (getUserNameNode && userTypeOnlyNode) {
+  const edge = graph.edges.find((e: any) => e.source === getUserNameNode.id && e.target === userTypeOnlyNode.id);
+  assert(!!edge, "edge getUserName -> User (type-only import)");
+  if (edge) {
+    assertEqual(edge.type, "type", "getUserName -> User edge has type 'type'");
+    assertEqual(edge.label, "type-only import", "getUserName -> User edge label is 'type-only import'");
+  }
+}
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
