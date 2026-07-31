@@ -44,6 +44,18 @@ function assertIncludes(arr: any[], item: any, msg: string) {
   assert(arr.includes(item), `${msg}: expected to include ${JSON.stringify(item)}, got ${JSON.stringify(arr)}`);
 }
 
+function assertEdgeVia(sourceId: string, targetId: string, expectedVia: string[], msg: string) {
+  const edge = graph.edges.find((e: any) => e.source === sourceId && e.target === targetId);
+  assert(!!edge, `${msg}: edge exists`);
+  if (edge) {
+    const actual = edge.via || [];
+    assert(
+      JSON.stringify(actual) === JSON.stringify(expectedVia),
+      `${msg}: expected via ${JSON.stringify(expectedVia)}, got ${JSON.stringify(actual)}`,
+    );
+  }
+}
+
 // --- Test: re-export-test.ts ---
 const reExportModule = data.modules.find((m) => m.id.endsWith("re-export-test.ts"));
 assert(!!reExportModule, "re-export-test.ts module exists");
@@ -256,6 +268,8 @@ const typesBarrelNode = graph.nodes.find((n: any) => n.id === "main.ts.main");
 const userModelBarrelNode = graph.nodes.find((n: any) => n.id.endsWith("models/user.ts.UserModel"));
 const userRoleBarrelNode = graph.nodes.find((n: any) => n.id.endsWith("models/user.ts.UserRole"));
 const userDeclaredNode = graph.nodes.find((n: any) => n.id.endsWith("types/index.ts.User"));
+const userIdDeclaredNode = graph.nodes.find((n: any) => n.id.endsWith("types/index.ts.UserId"));
+const productModelDirectNode = graph.nodes.find((n: any) => n.id.endsWith("types/models/product.ts.ProductModel"));
 if (typesBarrelNode && userModelBarrelNode) {
   assert(!!graph.edges.find((e: any) => e.source === typesBarrelNode.id && e.target === userModelBarrelNode.id), "edge main -> UserModel (via types/index.ts barrel)");
 }
@@ -264,6 +278,23 @@ if (typesBarrelNode && userRoleBarrelNode) {
 }
 if (typesBarrelNode && userDeclaredNode) {
   assert(!!graph.edges.find((e: any) => e.source === typesBarrelNode.id && e.target === userDeclaredNode.id), "edge main -> User (named import from './types')");
+}
+
+// Hybrid barrel: declared symbols have no via; re-exported symbols pass through the barrel
+if (typesBarrelNode && userDeclaredNode) {
+  assertEdgeVia(typesBarrelNode.id, userDeclaredNode.id, [], "main -> User is declared directly in types/index.ts (no via)");
+}
+if (typesBarrelNode && userIdDeclaredNode) {
+  assertEdgeVia(typesBarrelNode.id, userIdDeclaredNode.id, [], "main -> UserId is declared directly in types/index.ts (no via)");
+}
+if (typesBarrelNode && userModelBarrelNode) {
+  assertEdgeVia(typesBarrelNode.id, userModelBarrelNode.id, ["types/index.ts"], "main -> UserModel passes through types/index.ts");
+}
+if (typesBarrelNode && userRoleBarrelNode) {
+  assertEdgeVia(typesBarrelNode.id, userRoleBarrelNode.id, ["types/index.ts"], "main -> UserRole passes through types/index.ts");
+}
+if (typesBarrelNode && productModelDirectNode) {
+  assertEdgeVia(typesBarrelNode.id, productModelDirectNode.id, [], "main -> ProductModel is a direct import (no via)");
 }
 
 // --- Test: dynamic imports (string literal) ---
@@ -349,6 +380,9 @@ const userTypeNode = graph.nodes.find((n: any) => n.id.endsWith("user.ts.User"))
 
 if (loginNode && validateUserNode) {
   assert(!!graph.edges.find((e: any) => e.source === loginNode.id && e.target === validateUserNode.id), "edge login -> validateUser (via barrel)");
+}
+if (loginNode && validateUserNode) {
+  assertEdgeVia(loginNode.id, validateUserNode.id, ["core/auth/users/index.ts"], "login -> validateUser passes through core/auth/users/index.ts");
 }
 if (loginNode && getUserByUsernameNode) {
   assert(!!graph.edges.find((e: any) => e.source === loginNode.id && e.target === getUserByUsernameNode.id), "edge login -> getUserByUsername (via barrel)");
