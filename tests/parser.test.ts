@@ -449,6 +449,25 @@ if (getUserNameNode && userTypeOnlyNode) {
   }
 }
 
+// --- Test: import aliases (import { X as Y }) ---
+const aliasImport = data.imports.find((i) => i.source.endsWith("alias/uses-alias.ts"));
+assert(!!aliasImport, "alias/uses-alias.ts has an import");
+if (aliasImport) {
+  assert(aliasImport.target.endsWith("constants.ts"), "alias import resolves to constants.ts");
+  assertEqual(aliasImport.symbols?.length, 2, "alias import has 2 symbols (original names)");
+  assertIncludes(aliasImport.symbols || [], "API_URL", "alias import matches original name API_URL");
+  assertIncludes(aliasImport.symbols || [], "MAX_RETRIES", "alias import matches original name MAX_RETRIES");
+}
+const getEndpointNode = graph.nodes.find((n: any) => n.id.endsWith("alias/uses-alias.ts.getEndpoint"));
+const apiUrlAliasNode = graph.nodes.find((n: any) => n.id.endsWith("constants.ts.API_URL"));
+const maxRetriesAliasNode = graph.nodes.find((n: any) => n.id.endsWith("constants.ts.MAX_RETRIES"));
+if (getEndpointNode && apiUrlAliasNode) {
+  assert(!!graph.edges.find((e: any) => e.source === getEndpointNode.id && e.target === apiUrlAliasNode.id), "edge getEndpoint -> API_URL (aliased import)");
+}
+if (getEndpointNode && maxRetriesAliasNode) {
+  assert(!!graph.edges.find((e: any) => e.source === getEndpointNode.id && e.target === maxRetriesAliasNode.id), "edge getEndpoint -> MAX_RETRIES (aliased import)");
+}
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

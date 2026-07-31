@@ -164,9 +164,11 @@ export function extractImports(content: string): {
         if (ts.isNamedImports(node.importClause.namedBindings)) {
           const importedSymbols: string[] = [];
           node.importClause.namedBindings.elements.forEach((element) => {
-            symbols.push(element.name.text);
-            importedSymbols.push(element.name.text);
-            symbolToModule.set(element.name.text, moduleSpecifier);
+            const localName = element.name.text;
+            const importedName = element.propertyName?.text ?? localName;
+            symbols.push(localName);
+            importedSymbols.push(importedName);
+            symbolToModule.set(localName, moduleSpecifier);
           });
           const existing = importMap.get(moduleSpecifier);
           if (existing) {
