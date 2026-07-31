@@ -26,6 +26,7 @@ export interface Module {
   name: string; // last path segment (e.g., "utils" from "src/utils.ts")
   path: string; // full file path
   symbols: Symbol[];
+  reExports?: { module: string; symbols: string[] }[];
 }
 
 export interface Script {
@@ -33,6 +34,7 @@ export interface Script {
   name: string; // last path segment
   path: string; // full file path
   symbols: Symbol[];
+  reExports?: { module: string; symbols: string[] }[];
 }
 
 export interface ParsedData {
@@ -159,7 +161,12 @@ export function extractImports(content: string): {
             importedSymbols.push(element.name.text);
             symbolToModule.set(element.name.text, moduleSpecifier);
           });
-          importMap.set(moduleSpecifier, importedSymbols);
+          const existing = importMap.get(moduleSpecifier);
+          if (existing) {
+            existing.push(...importedSymbols);
+          } else {
+            importMap.set(moduleSpecifier, importedSymbols);
+          }
         } else if (ts.isNamespaceImport(node.importClause.namedBindings)) {
           wildcardImports.push(moduleSpecifier);
           importMap.set(moduleSpecifier, []);
@@ -832,15 +839,28 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
     // Check for import statements (any import makes it a module)
     const hasImports = /import\s+/.test(file.content);
 
+    const {
+      imports: fileImports,
+      wildcardImports,
+      dynamicImports,
+      importMap,
+      reExports,
+    } = extractImports(file.content);
+
+    // Re-export declarations (`export ... from`) make a file a module, even
+    // without any declared symbols or import statements (e.g. pure barrels)
+    const hasReExports = reExports.length > 0;
+
     const name = file.path.split("/").pop() || file.path;
 
     // File is a module if it has exports, empty export, or imports
-    if (hasExports || hasEmptyExport || hasImports) {
+    if (hasExports || hasEmptyExport || hasImports || hasReExports) {
       modules.push({
         id: file.path,
         name,
         path: file.path,
         symbols,
+        ...(reExports.length > 0 ? { reExports } : {}),
       });
     } else {
       scripts.push({
@@ -850,13 +870,6 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
         symbols,
       });
     }
-
-    const {
-      imports: fileImports,
-      wildcardImports,
-      dynamicImports,
-      importMap,
-    } = extractImports(file.content);
     const dirPath = file.path.split("/").slice(0, -1).join("/");
 
     // Handle regular imports
@@ -945,6 +958,89 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
   return { modules, scripts, imports };
 }
 
+// Resolve a relative module specifier against the file that contains it
+function resolveRelativeModulePath(
+  baseFilePath: string,
+  specifier: string,
+): string | undefined {
+  if (!specifier.startsWith(".")) return undefined; // external, skip
+
+  const baseDir = baseFilePath.split("/").slice(0, -1);
+  const parts = specifier.split("/");
+  parts.forEach((part) => {
+    if (part === "..") {
+      baseDir.pop();
+    } else if (part !== ".") {
+      baseDir.push(part);
+    }
+  });
+
+  const resolved = baseDir.join("/");
+  return resolved.endsWith(".ts") || resolved.endsWith(".tsx")
+    ? resolved
+    : `${resolved}.ts`;
+}
+
+// Collect every exported symbol reachable from a module, following re-export
+// chains (export { x } from, export * from) to the defining files.
+// `inProgress` tracks only the current resolution path to cut cycles, so a
+// module re-exported from multiple entries is resolved on each visit.
+function collectResolvedExports(
+  modulePath: string,
+  moduleToSymbols: Map<string, Symbol[]>,
+  moduleToReExports: Map<string, { module: string; symbols: string[] }[]>,
+  inProgress: Set<string>,
+): Symbol[] {
+  const foundPath = moduleToSymbols.has(modulePath)
+    ? modulePath
+    : moduleToSymbols.has(modulePath.replace(/\.ts$/, "/index.ts"))
+      ? modulePath.replace(/\.ts$/, "/index.ts")
+      : undefined;
+  if (!foundPath || inProgress.has(foundPath)) return [];
+  inProgress.add(foundPath);
+
+  const result: Symbol[] = [];
+  result.push(...(moduleToSymbols.get(foundPath) || []).filter((s) => s.isExport));
+
+  const reExports = moduleToReExports.get(foundPath) || [];
+  reExports.forEach((reExport) => {
+    const targetPath = resolveRelativeModulePath(foundPath, reExport.module);
+    if (!targetPath) return;
+
+    const resolvedSymbols = collectResolvedExports(
+      targetPath,
+      moduleToSymbols,
+      moduleToReExports,
+      inProgress,
+    );
+
+    if (reExport.symbols.length === 0) {
+      result.push(...resolvedSymbols);
+    } else {
+      result.push(
+        ...resolvedSymbols.filter((s) => reExport.symbols.includes(s.name)),
+      );
+    }
+  });
+
+  inProgress.delete(foundPath);
+  return result;
+}
+
+// Resolve an import target to its module symbols, falling back to an index.ts
+// barrel when the direct path doesn't exist (e.g. "./types" -> "types/index.ts")
+function findTargetSymbols(
+  targetPath: string,
+  moduleToSymbols: Map<string, Symbol[]>,
+): Symbol[] | undefined {
+  const direct = moduleToSymbols.get(targetPath);
+  if (direct) return direct;
+  if (!targetPath.endsWith("/index.ts")) {
+    return moduleToSymbols.get(targetPath.replace(/\.ts$/, "/index.ts"));
+  }
+  return undefined;
+}
+
 // Build graph nodes and edges from minimal data format
 export function buildGraphFromMinimal(data: ParsedData): {
   nodes: any[];
@@ -953,6 +1049,10 @@ export function buildGraphFromMinimal(data: ParsedData): {
   const nodes: any[] = [];
   const edges: any[] = [];
   const moduleToSymbols = new Map<string, Symbol[]>();
+  const moduleToReExports = new Map<
+    string,
+    { module: string; symbols: string[] }[]
+  >();
 
   // Combine modules and scripts
   const allModules = [...data.modules, ...data.scripts];
@@ -960,6 +1060,9 @@ export function buildGraphFromMinimal(data: ParsedData): {
   // Extract symbols from all modules
   allModules.forEach((module) => {
     moduleToSymbols.set(module.path, module.symbols);
+    if (module.reExports && module.reExports.length > 0) {
+      moduleToReExports.set(module.path, module.reExports);
+    }
 
     module.symbols.forEach((symbol) => {
       const pathParts = module.path.split("/");
@@ -985,10 +1088,15 @@ export function buildGraphFromMinimal(data: ParsedData): {
   const edgeKeyCount = new Map<string, number>();
 
   data.imports.forEach((importData) => {
-    const targetSymbols = moduleToSymbols.get(importData.target);
+    const targetSymbols = findTargetSymbols(importData.target, moduleToSymbols);
     if (!targetSymbols) return;
 
-    const targetExports = targetSymbols.filter((s) => s.isExport);
+    const targetExports = collectResolvedExports(
+      importData.target,
+      moduleToSymbols,
+      moduleToReExports,
+      new Set(),
+    );
 
     // Function-level dynamic import: only connect the containing function
     if (importData.type === "dynamic" && importData.containingFunction) {

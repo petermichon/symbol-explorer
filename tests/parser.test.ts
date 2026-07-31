@@ -122,6 +122,17 @@ if (configImport) {
   assertIncludes(configImport.symbols || [], "MAX_RETRIES", "config.ts imports MAX_RETRIES");
 }
 
+// The config.ts barrel must resolve to graph edges at the actual symbol locations
+const mainNode = graph.nodes.find((n: any) => n.id === "main.ts.main");
+const apiUrlNode = graph.nodes.find((n: any) => n.id.endsWith("constants.ts.API_URL"));
+const maxRetriesNode = graph.nodes.find((n: any) => n.id.endsWith("constants.ts.MAX_RETRIES"));
+if (mainNode && apiUrlNode) {
+  assert(!!graph.edges.find((e: any) => e.source === mainNode.id && e.target === apiUrlNode.id), "edge main -> API_URL (via config.ts barrel)");
+}
+if (mainNode && maxRetriesNode) {
+  assert(!!graph.edges.find((e: any) => e.source === mainNode.id && e.target === maxRetriesNode.id), "edge main -> MAX_RETRIES (via config.ts barrel)");
+}
+
 // --- Test: import-test/B.ts (specific named import) ---
 const bModule = data.modules.find((m) => m.id.endsWith("B.ts"));
 assert(!!bModule, "B.ts module exists");
@@ -240,6 +251,21 @@ if (userModelModule) {
   if (userModel) assertEqual(userModel.isExport, true, "UserModel is marked as export");
 }
 
+// --- Test: types/index.ts barrel re-exports resolve to actual symbols ---
+const typesBarrelNode = graph.nodes.find((n: any) => n.id === "main.ts.main");
+const userModelBarrelNode = graph.nodes.find((n: any) => n.id.endsWith("models/user.ts.UserModel"));
+const userRoleBarrelNode = graph.nodes.find((n: any) => n.id.endsWith("models/user.ts.UserRole"));
+const userDeclaredNode = graph.nodes.find((n: any) => n.id.endsWith("types/index.ts.User"));
+if (typesBarrelNode && userModelBarrelNode) {
+  assert(!!graph.edges.find((e: any) => e.source === typesBarrelNode.id && e.target === userModelBarrelNode.id), "edge main -> UserModel (via types/index.ts barrel)");
+}
+if (typesBarrelNode && userRoleBarrelNode) {
+  assert(!!graph.edges.find((e: any) => e.source === typesBarrelNode.id && e.target === userRoleBarrelNode.id), "edge main -> UserRole (via types/index.ts barrel)");
+}
+if (typesBarrelNode && userDeclaredNode) {
+  assert(!!graph.edges.find((e: any) => e.source === typesBarrelNode.id && e.target === userDeclaredNode.id), "edge main -> User (named import from './types')");
+}
+
 // --- Test: dynamic imports (string literal) ---
 const hardcodedDynamicImport = data.imports.find((i) => i.source.endsWith("dynamic/dynamic-imports.ts") && i.type === "dynamic");
 assert(!!hardcodedDynamicImport, "dynamic/dynamic-imports.ts has a dynamic import (string literal)");
@@ -301,6 +327,37 @@ const folderAImportTs = data.imports.find((i) => i.source.endsWith("folder-a/uni
 assert(!!folderAImportTs, "folder-a/unique.ts import exists");
 if (folderAImportTs) {
   assert(folderAImportTs.target.endsWith("useless.ts"), "folder-a/unique.ts target resolves correctly with .ts extension");
+}
+
+// --- Test: pure barrel (nohonu scenario) ---
+// core/auth/users/index.ts re-exports only (`export ... from`), no imports/declarations.
+// Consumers import it via namespace import. The re-exported symbols live in their own files.
+const usersBarrel = data.modules.find((m) => m.id.endsWith("core/auth/users/index.ts"));
+assert(!!usersBarrel, "core/auth/users/index.ts is a module (pure barrel)");
+
+const usersImport = data.imports.filter((i) => i.source.endsWith("usecases/auth.ts") && i.target.endsWith("core/auth/users/index.ts"));
+assert(usersImport.length >= 1, "usecases/auth.ts imports from core/auth/users/index.ts");
+
+// The re-exported symbols must be reachable from the usecase symbols
+const loginNode = graph.nodes.find((n: any) => n.id.endsWith("usecases/auth.ts.login"));
+const registerNode = graph.nodes.find((n: any) => n.id.endsWith("usecases/auth.ts.register"));
+const authResultNode = graph.nodes.find((n: any) => n.id.endsWith("usecases/auth.ts.AuthResult"));
+const createUserNode = graph.nodes.find((n: any) => n.id.endsWith("create-user.ts.createUser"));
+const validateUserNode = graph.nodes.find((n: any) => n.id.endsWith("validate-user.ts.validateUser"));
+const getUserByUsernameNode = graph.nodes.find((n: any) => n.id.endsWith("get-user-by-username.ts.getUserByUsername"));
+const userTypeNode = graph.nodes.find((n: any) => n.id.endsWith("user.ts.User"));
+
+if (loginNode && validateUserNode) {
+  assert(!!graph.edges.find((e: any) => e.source === loginNode.id && e.target === validateUserNode.id), "edge login -> validateUser (via barrel)");
+}
+if (loginNode && getUserByUsernameNode) {
+  assert(!!graph.edges.find((e: any) => e.source === loginNode.id && e.target === getUserByUsernameNode.id), "edge login -> getUserByUsername (via barrel)");
+}
+if (registerNode && createUserNode) {
+  assert(!!graph.edges.find((e: any) => e.source === registerNode.id && e.target === createUserNode.id), "edge register -> createUser (via barrel)");
+}
+if (authResultNode && userTypeNode) {
+  assert(!!graph.edges.find((e: any) => e.source === authResultNode.id && e.target === userTypeNode.id), "edge AuthResult -> User (via barrel)");
 }
 
 // --- Summary ---
