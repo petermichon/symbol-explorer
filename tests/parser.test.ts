@@ -360,6 +360,42 @@ if (authResultNode && userTypeNode) {
   assert(!!graph.edges.find((e: any) => e.source === authResultNode.id && e.target === userTypeNode.id), "edge AuthResult -> User (via barrel)");
 }
 
+// --- Test: normal import without .ts extension ---
+const noExtImport = data.imports.find((i) => i.source.endsWith("uses-constants.ts"));
+assert(!!noExtImport, "uses-constants.ts has an import");
+if (noExtImport) {
+  assert(noExtImport.target.endsWith("constants.ts"), "import './constants' resolves to constants.ts");
+  assertEqual(noExtImport.symbols?.length, 1, "uses-constants.ts imports exactly 1 symbol");
+  assertEqual(noExtImport.symbols?.[0], "API_URL", "uses-constants.ts imports API_URL");
+}
+const getApiUrlNode = graph.nodes.find((n: any) => n.id.endsWith("uses-constants.ts.getApiUrl"));
+const apiUrlConstNode = graph.nodes.find((n: any) => n.id.endsWith("constants.ts.API_URL"));
+if (getApiUrlNode && apiUrlConstNode) {
+  assert(!!graph.edges.find((e: any) => e.source === getApiUrlNode.id && e.target === apiUrlConstNode.id), "edge getApiUrl -> API_URL (import without .ts)");
+}
+
+// --- Test: barrel re-export without .ts extension ---
+const noExtBarrel = data.modules.find((m) => m.id.endsWith("no-ext-barrel/index.ts"));
+assert(!!noExtBarrel, "no-ext-barrel/index.ts is a module (barrel)");
+assertEqual(noExtBarrel.symbols.length, 0, "no-ext-barrel/index.ts has 0 symbols (only re-exports)");
+
+const noExtBarrelImport = data.imports.find((i) => i.source.endsWith("no-ext-barrel/uses-barrel.ts"));
+assert(!!noExtBarrelImport, "uses-barrel.ts has an import");
+if (noExtBarrelImport) {
+  assert(noExtBarrelImport.target.endsWith("no-ext-barrel/index.ts"), "import './index' resolves to no-ext-barrel/index.ts");
+}
+
+// Re-export specifiers without .ts must resolve to the real symbol locations
+const useBarrelNode = graph.nodes.find((n: any) => n.id.endsWith("no-ext-barrel/uses-barrel.ts.useBarrel"));
+const valueANode = graph.nodes.find((n: any) => n.id.endsWith("no-ext-barrel/value-a.ts.VALUE_A"));
+const valueBNode = graph.nodes.find((n: any) => n.id.endsWith("no-ext-barrel/value-b.ts.valueB"));
+if (useBarrelNode && valueANode) {
+  assert(!!graph.edges.find((e: any) => e.source === useBarrelNode.id && e.target === valueANode.id), "edge useBarrel -> VALUE_A (re-export without .ts)");
+}
+if (useBarrelNode && valueBNode) {
+  assert(!!graph.edges.find((e: any) => e.source === useBarrelNode.id && e.target === valueBNode.id), "edge useBarrel -> valueB (re-export without .ts)");
+}
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

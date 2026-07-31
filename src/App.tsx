@@ -1088,7 +1088,7 @@ function App() {
     return force;
   }
 
-  function initPolyBlocksNodes(nodes: any[], spacing: number, rectStore?: { treemapSize: number; rects: Map<string, { x0: number; y0: number; x1: number; y1: number }> }) {
+  function initPolyBlocksNodes(nodes: any[], spacing: number, rectStore?: { treemapSize: number; rects: Map<string, { x0: number; y0: number; x1: number; y1: number }> }, emptyFileKeys: string[] = []) {
     const groupKeyToName: string[] = [];
     const groups: { members: any[] }[] = [];
     const groupKey = new Map<string, number>();
@@ -1101,6 +1101,14 @@ function App() {
         groups[groupKey.get(key)!].members.push(n);
       }
     });
+    // Empty files (no symbols) still get a treemap cell so they appear as isolated blocks
+    emptyFileKeys.forEach((key) => {
+      if (key && !groupKey.has(key)) {
+        groupKey.set(key, groups.length);
+        groups.push({ members: [] });
+        groupKeyToName.push(key);
+      }
+    });
     if (groups.length === 0) return;
     if (rectStore) rectStore.rects.clear();
 
@@ -1108,9 +1116,9 @@ function App() {
 
     try {
       const rootData: any = { id: "root", children: [] };
-      groups.forEach((g, i) => rootData.children.push({ id: String(i), value: g.members.length }));
+      groups.forEach((g, i) => rootData.children.push({ id: String(i), value: Math.max(1, g.members.length) }));
       const root = d3.hierarchy(rootData).sum(d => d.value);
-      const rawSize = Math.max(600, Math.ceil(Math.sqrt(nodes.length) * spacing * 2.5));
+      const rawSize = Math.max(600, Math.ceil(Math.sqrt(nodes.length + emptyFileKeys.length) * spacing * 2.5));
       const treemapSize = Math.ceil(rawSize / (spacing * 2)) * (spacing * 2);
       d3.treemap<any>().size([treemapSize, treemapSize]).padding(16).round(true)(root);
 
@@ -1246,6 +1254,7 @@ function App() {
 
   function rebuildPolyBlocksRects() {
     const rects = polyBlocksRectsRef.current.rects;
+    const prevRects = new Map(rects);
     rects.clear();
     const groups = new Map<string, any[]>();
     filteredNodes.forEach((n: any) => {
@@ -1263,6 +1272,12 @@ function App() {
       const minY = Math.min(...members.map((n: any) => n.y)) - padding;
       const maxY = Math.max(...members.map((n: any) => n.y)) + padding;
       rects.set(key, { x0: minX, y0: minY, x1: maxX, y1: maxY });
+    });
+    // Empty files have no member nodes, so keep their treemap cells from the last init
+    emptyGroupsRef.current.forEach((g) => {
+      if (!rects.has(g.key) && prevRects.has(g.key)) {
+        rects.set(g.key, prevRects.get(g.key)!);
+      }
     });
   }
 
@@ -1332,6 +1347,42 @@ function App() {
 
     return { filteredNodes: visibleNodes, filteredEdges: visibleEdges };
   }, [generatedNodes, generatedEdges, hiddenPaths, hiddenSymbols]);
+
+  // Files with no symbols (empty modules/scripts, e.g. pure barrel index.ts).
+  // In poly-blocks they render as isolated blocks, mirroring filteredNodes' visibility rules.
+  const emptyFileGroups = useMemo(() => {
+    if (!parsedData) return [];
+    const groups: { key: string; file: string; folder: string }[] = [];
+    const hiddenSet = hiddenPaths;
+    [...parsedData.modules, ...parsedData.scripts].forEach((m) => {
+      if (m.symbols.length > 0) return;
+      const pathParts = m.path.split("/");
+      const file = pathParts[pathParts.length - 1] || m.path;
+      const folder = pathParts.slice(0, -1).join("/");
+      const key = folder ? `${folder}/${file}` : file;
+
+      // Check if this folder or any parent folder is hidden
+      const folderParts = folder.split("/").filter(Boolean);
+      let hidden = false;
+      for (let i = 0; i < folderParts.length; i++) {
+        const parentPath = folderParts.slice(0, i + 1).join("/");
+        if (hiddenSet.has(parentPath)) {
+          hidden = true;
+          break;
+        }
+      }
+      if (hidden) return;
+
+      // Check if this specific file is hidden
+      if (hiddenSet.has(key.replace(".ts", ""))) return;
+
+      groups.push({ key, file, folder });
+    });
+    return groups;
+  }, [parsedData, hiddenPaths]);
+
+  const emptyGroupsRef = useRef(emptyFileGroups);
+  emptyGroupsRef.current = emptyFileGroups;
 
   const handleHoverPath = useCallback(
     (path: string | null, isFolder: boolean = false) => {
@@ -1759,7 +1810,7 @@ function App() {
   const resetGraph = useCallback(() => {
     if (simulationRef.current) {
       if (viewMode === "poly-blocks") {
-        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current, emptyGroupsRef.current.map((g) => g.key));
         rebuildPolyBlocksRects();
       } else {
         filteredNodes.forEach((node: any) => {
@@ -2192,7 +2243,7 @@ function App() {
         Math.abs(filteredNodes[0].x % 40) > 0.1
       );
       if (needsInit) {
-        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+        initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current, emptyGroupsRef.current.map((g) => g.key));
       }
       rebuildPolyBlocksRects();
       polyBlocksDataRef.current = generatedNodes;
@@ -3582,6 +3633,62 @@ function App() {
             groupHulls.set(uniqueKey, boxHull);
           }
         });
+
+        // Draw module name just above each group's shape
+        groupHulls.forEach((hull, key) => {
+          const xs = hull.map((p) => p[0]);
+          const ys = hull.map((p) => p[1]);
+          const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+          const top = Math.min(...ys);
+          const folder = key.includes("/")
+            ? key.slice(0, key.lastIndexOf("/"))
+            : "root";
+          const folderColor = colorScale(folder) as string;
+
+          context.font =
+            '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+          context.fillStyle = folderColor;
+          context.textAlign = "center";
+          context.textBaseline = "bottom";
+          context.fillText(key, cx, top - 6);
+          context.textAlign = "left";
+          context.textBaseline = "alphabetic";
+        });
+      }
+
+      // Draw blocks for empty files (no symbols), styled exactly like normal module blocks
+      if (viewMode === "poly-blocks") {
+        const hexToRgba = (hex: string, alpha: number): string => {
+          const r = parseInt(hex.slice(1, 3), 16);
+          const g = parseInt(hex.slice(3, 5), 16);
+          const b = parseInt(hex.slice(5, 7), 16);
+          return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        };
+        emptyGroupsRef.current.forEach((g) => {
+          const rect = polyBlocksRectsRef.current.rects.get(g.key);
+          if (!rect) return;
+          const folderColor = colorScale(g.folder || "root") as string;
+          const width = rect.x1 - rect.x0;
+          const height = rect.y1 - rect.y0;
+          const cx = (rect.x0 + rect.x1) / 2;
+
+          context.beginPath();
+          context.roundRect(rect.x0, rect.y0, width, height, 8);
+          context.fillStyle = hexToRgba(folderColor, 0.15);
+          context.fill();
+          context.strokeStyle = hexToRgba(folderColor, 0.3);
+          context.lineWidth = 1;
+          context.stroke();
+
+          context.font =
+            '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+          context.fillStyle = folderColor;
+          context.textAlign = "center";
+          context.textBaseline = "bottom";
+          context.fillText(g.key, cx, rect.y0 - 6);
+          context.textAlign = "left";
+          context.textBaseline = "alphabetic";
+        });
       }
 
       // Pre-build node id map for O(1) lookups
@@ -4118,7 +4225,6 @@ function App() {
         );
         if (selectedNode) {
           const lastDotIndex = selectedNode.id.lastIndexOf(".");
-          const pathPart = selectedNode.id.substring(0, lastDotIndex);
           const symbolPart = selectedNode.id.substring(lastDotIndex + 1);
 
           // Measure symbol part with bold font
@@ -4126,12 +4232,7 @@ function App() {
             'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
           const symbolWidth = context.measureText(symbolPart).width;
 
-          // Measure path part with normal font
-          context.font =
-            '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-          const pathWidth = context.measureText(` ${pathPart}`).width;
-
-          const totalWidth = symbolWidth + pathWidth;
+          const totalWidth = symbolWidth;
           const startX = selectedNode.x - totalWidth / 2;
           const padding = 6;
           const rectWidth = totalWidth + padding * 2;
@@ -4151,12 +4252,6 @@ function App() {
             'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
           context.fillStyle = "#fafafa"; // neutral-50
           context.fillText(symbolPart, startX, textY);
-
-          // Draw path (normal, gray)
-          context.font =
-            '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-          context.fillStyle = "#fafafa"; // neutral-50
-          context.fillText(` ${pathPart}`, startX + symbolWidth, textY);
         }
       }
 
@@ -4168,7 +4263,6 @@ function App() {
         !hoverFromTreeRef.current
       ) {
         const lastDotIndex = hoveredNodeRef.current.id.lastIndexOf(".");
-        const pathPart = hoveredNodeRef.current.id.substring(0, lastDotIndex);
         const symbolPart = hoveredNodeRef.current.id.substring(
           lastDotIndex + 1,
         );
@@ -4178,12 +4272,7 @@ function App() {
           'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
         const symbolWidth = context.measureText(symbolPart).width;
 
-        // Measure path part with normal font
-        context.font =
-          '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        const pathWidth = context.measureText(` ${pathPart}`).width;
-
-        const totalWidth = symbolWidth + pathWidth;
+        const totalWidth = symbolWidth;
         const startX = hoveredNodeRef.current.x - totalWidth / 2;
         const padding = 6;
         const rectWidth = totalWidth + padding * 2;
@@ -4203,12 +4292,6 @@ function App() {
           'bold 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
         context.fillStyle = "#fafafa"; // neutral-50
         context.fillText(symbolPart, startX, textY);
-
-        // Draw path (normal, gray)
-        context.font =
-          '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        context.fillStyle = "#fafafa"; // neutral-50
-        context.fillText(` ${pathPart}`, startX + symbolWidth, textY);
       }
 
       context.restore();
@@ -4773,7 +4856,7 @@ function App() {
           Math.abs(filteredNodes[0].x % 40) > 0.1
         );
         if (needsInit) {
-          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current, emptyGroupsRef.current.map((g) => g.key));
         }
         applySavedPositions(filteredNodes);
         rebuildPolyBlocksRects();
@@ -4879,7 +4962,7 @@ function App() {
           Math.abs(filteredNodes[0].x % 40) > 0.1
         );
         if (needsInit) {
-          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current);
+          initPolyBlocksNodes(filteredNodes, 40, polyBlocksRectsRef.current, emptyGroupsRef.current.map((g) => g.key));
         }
         applySavedPositions(filteredNodes);
         rebuildPolyBlocksRects();
