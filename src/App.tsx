@@ -248,6 +248,7 @@ function App() {
   const simulationRef = useRef<any>(null);
   const polyBlocksDataRef = useRef<any[] | null>(null);
   const polyBlocksRectsRef = useRef<{ treemapSize: number; rects: Map<string, { x0: number; y0: number; x1: number; y1: number }> }>({ treemapSize: 0, rects: new Map() });
+  const emptyModulePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const drawRef = useRef<(() => void) | null>(null);
   const hoveredNodeRef = useRef<any>(null);
   const hoverFromTreeRef = useRef(false);
@@ -1127,10 +1128,6 @@ function App() {
       root.children?.forEach((child: any) => {
         const gi = Number(child.data.id);
         const g = groups[gi];
-        if (rectStore && groupKeyToName[gi]) {
-          const half = treemapSize / 2;
-          rectStore.rects.set(groupKeyToName[gi], { x0: child.x0 - half, y0: child.y0 - half, x1: child.x1 - half, y1: child.y1 - half });
-        }
         const [x0, y0, x1, y1] = [child.x0, child.y0, child.x1, child.y1];
         const slots: [number, number][] = [];
         const gx0 = Math.floor(x0 / spacing) * spacing;
@@ -1143,6 +1140,17 @@ function App() {
         slots.sort((a, b) => (a[0] - slots[0][0]) ** 2 + (a[1] - slots[0][1]) ** 2 - (b[0] - slots[0][0]) ** 2 - (b[1] - slots[0][1]) ** 2);
         const offX = Math.round((x0 + x1) / 2 / spacing) * spacing - treemapSize / 2;
         const offY = Math.round((y0 + y1) / 2 / spacing) * spacing - treemapSize / 2;
+        if (rectStore && groupKeyToName[gi]) {
+          const half = treemapSize / 2;
+          if (g.members.length === 0) {
+            // Empty module: same footprint as a 1-symbol block, centered on a grid point
+            const s = 15; // matches block padding around a symbol node
+            emptyModulePositionsRef.current.set(groupKeyToName[gi], { x: offX, y: offY });
+            rectStore.rects.set(groupKeyToName[gi], { x0: offX - s, y0: offY - s, x1: offX + s, y1: offY + s });
+          } else {
+            rectStore.rects.set(groupKeyToName[gi], { x0: child.x0 - half, y0: child.y0 - half, x1: child.x1 - half, y1: child.y1 - half });
+          }
+        }
         const boundCheck = (sx: number, sy: number) => {
           const rx = sx + treemapSize / 2, ry = sy + treemapSize / 2;
           return rx >= x0 && rx < x1 && ry >= y0 && ry < y1;
@@ -1207,8 +1215,10 @@ function App() {
     const storageKey = getPolyBlocksStorageKey();
     const positions: Record<string, { x: number; y: number }> = {};
     nodes.forEach((n: any) => { positions[n.id] = { x: n.x, y: n.y }; });
-    localStorage.setItem(storageKey, JSON.stringify({ positions }));
-    console.log("[pos] saved", Object.keys(positions).length, "for", storageKey);
+    const emptyModules: Record<string, { x: number; y: number }> = {};
+    emptyModulePositionsRef.current.forEach((pos, key) => { emptyModules[key] = { x: pos.x, y: pos.y }; });
+    localStorage.setItem(storageKey, JSON.stringify({ positions, emptyModules }));
+    console.log("[pos] saved", Object.keys(positions).length, "nodes,", Object.keys(emptyModules).length, "empty modules for", storageKey);
   }
 
   function applySavedPositions(nodes: any[]): void {
@@ -1232,6 +1242,16 @@ function App() {
           count++;
         }
       });
+      if (data.emptyModules) {
+        emptyModulePositionsRef.current.forEach((_, key) => {
+          const pos = data.emptyModules[key];
+          if (pos) {
+            const s = 15;
+            emptyModulePositionsRef.current.set(key, { x: pos.x, y: pos.y });
+            polyBlocksRectsRef.current.rects.set(key, { x0: pos.x - s, y0: pos.y - s, x1: pos.x + s, y1: pos.y + s });
+          }
+        });
+      }
       console.log("[pos] restored", count, "of", nodes.length, "nodes for", storageKey);
     } catch (e) { console.error("[pos] error", e); }
   }
@@ -2213,6 +2233,8 @@ function App() {
     let panStart = { x: 0, y: 0 };
     let draggedNode: any = null;
     let draggedGroup: any[] | null = null;
+    let draggedEmptyModule: string | null = null;
+    let draggedEmptyOffset: { x: number; y: number } | null = null;
 
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
@@ -2406,9 +2428,24 @@ function App() {
           nodesByFile.get(uniqueKey)!.push(node);
         });
 
+        // Empty modules (0 symbols) join the normal grouping so they render
+        // through the same path, using their treemap cell as geometry
+        if (viewMode === "poly-blocks") {
+          emptyGroupsRef.current.forEach((g) => {
+            if (!nodesByFile.has(g.key)) {
+              nodesByFile.set(g.key, []);
+            }
+          });
+        }
+
         nodesByFile.forEach((nodes, uniqueKey) => {
           // Get folder color for this group
-          const folder = nodes[0].data.folder || "root";
+          const folder =
+            nodes.length > 0
+              ? nodes[0].data.folder || "root"
+              : uniqueKey.includes("/")
+                ? uniqueKey.slice(0, uniqueKey.lastIndexOf("/"))
+                : "root";
           const folderColor = colorScale(folder) as string;
 
           // Convert hex to rgba with 0.15 opacity
@@ -3604,13 +3641,26 @@ function App() {
             groupHulls.set(uniqueKey, circleHull);
           } else if (viewMode === "boxes" || viewMode === "poly-blocks") {
             // Bounding box with rounded corners for boxes mode
-            if (nodes.length < 1) return;
-
             const padding = 15;
-            const minX = Math.min(...nodes.map((n) => n.x)) - padding;
-            const maxX = Math.max(...nodes.map((n) => n.x)) + padding;
-            const minY = Math.min(...nodes.map((n) => n.y)) - padding;
-            const maxY = Math.max(...nodes.map((n) => n.y)) + padding;
+            let minX: number;
+            let minY: number;
+            let maxX: number;
+            let maxY: number;
+
+            if (nodes.length > 0) {
+              minX = Math.min(...nodes.map((n) => n.x)) - padding;
+              maxX = Math.max(...nodes.map((n) => n.x)) + padding;
+              minY = Math.min(...nodes.map((n) => n.y)) - padding;
+              maxY = Math.max(...nodes.map((n) => n.y)) + padding;
+            } else {
+              // Empty module: use its treemap cell as the block geometry
+              const rect = polyBlocksRectsRef.current.rects.get(uniqueKey);
+              if (!rect) return;
+              minX = rect.x0;
+              minY = rect.y0;
+              maxX = rect.x1;
+              maxY = rect.y1;
+            }
             const width = maxX - minX;
             const height = maxY - minY;
             const radius = 8;
@@ -3651,41 +3701,6 @@ function App() {
           context.textAlign = "center";
           context.textBaseline = "bottom";
           context.fillText(key, cx, top - 6);
-          context.textAlign = "left";
-          context.textBaseline = "alphabetic";
-        });
-      }
-
-      // Draw blocks for empty files (no symbols), styled exactly like normal module blocks
-      if (viewMode === "poly-blocks") {
-        const hexToRgba = (hex: string, alpha: number): string => {
-          const r = parseInt(hex.slice(1, 3), 16);
-          const g = parseInt(hex.slice(3, 5), 16);
-          const b = parseInt(hex.slice(5, 7), 16);
-          return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-        };
-        emptyGroupsRef.current.forEach((g) => {
-          const rect = polyBlocksRectsRef.current.rects.get(g.key);
-          if (!rect) return;
-          const folderColor = colorScale(g.folder || "root") as string;
-          const width = rect.x1 - rect.x0;
-          const height = rect.y1 - rect.y0;
-          const cx = (rect.x0 + rect.x1) / 2;
-
-          context.beginPath();
-          context.roundRect(rect.x0, rect.y0, width, height, 8);
-          context.fillStyle = hexToRgba(folderColor, 0.15);
-          context.fill();
-          context.strokeStyle = hexToRgba(folderColor, 0.3);
-          context.lineWidth = 1;
-          context.stroke();
-
-          context.font =
-            '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-          context.fillStyle = folderColor;
-          context.textAlign = "center";
-          context.textBaseline = "bottom";
-          context.fillText(g.key, cx, rect.y0 - 6);
           context.textAlign = "left";
           context.textBaseline = "alphabetic";
         });
@@ -3776,6 +3791,42 @@ function App() {
           }
         });
 
+        // Module centroid: from member nodes, or from the block rect for empty modules
+        const getModuleCentroid = (fileKey: string): { x: number; y: number } | undefined => {
+          const centroid = fileCentroids.get(fileKey);
+          if (centroid) return centroid;
+          const rect = polyBlocksRectsRef.current.rects.get(fileKey);
+          if (rect) {
+            return {
+              x: (rect.x0 + rect.x1) / 2,
+              y: (rect.y0 + rect.y1) / 2,
+            };
+          }
+          return undefined;
+        };
+
+        // Segments shared between pass-through connections are stroked only once
+        const strokedSegments = new Set<string>();
+        const strokeSegment = (
+          p1: { x: number; y: number },
+          p2: { x: number; y: number },
+          color: string,
+          width: number,
+          alpha: number,
+        ) => {
+          const key = `${p1.x},${p1.y}->${p2.x},${p2.y}`;
+          if (strokedSegments.has(key)) return;
+          strokedSegments.add(key);
+          context.beginPath();
+          context.moveTo(p1.x, p1.y);
+          context.lineTo(p2.x, p2.y);
+          context.strokeStyle = color;
+          context.lineWidth = width;
+          context.globalAlpha = alpha;
+          context.stroke();
+          context.globalAlpha = 1;
+        };
+
         // Resolve edge source/target from string IDs to node objects
         const nodeMap = new Map<string, any>();
         filteredNodes.forEach((node: any) => nodeMap.set(node.id, node));
@@ -3794,7 +3845,7 @@ function App() {
         // - Symbol-level dynamic imports: source symbol node -> target file centroid
         const fileConnections = new Map<
           string,
-          Map<string, { count: number; types: Set<string> }>
+          Map<string, { count: number; types: Set<string>; via: Set<string> }>
         >();
         const namedImportEdges: any[] = []; // source file -> target symbol
         const symbolLevelEdges: any[] = []; // source symbol -> target file
@@ -3832,11 +3883,18 @@ function App() {
             }
             const targetMap = fileConnections.get(sourceKey)!;
             if (!targetMap.has(targetKey)) {
-              targetMap.set(targetKey, { count: 0, types: new Set() });
+              targetMap.set(targetKey, {
+                count: 0,
+                types: new Set(),
+                via: new Set(),
+              });
             }
             const connection = targetMap.get(targetKey)!;
             connection.count++;
             connection.types.add(edge.type);
+            if (edge.via && edge.via.length > 0) {
+              edge.via.forEach((b: string) => connection.via.add(b));
+            }
             processedEdges.add(edge.id);
           }
         });
@@ -3864,20 +3922,23 @@ function App() {
           const edgeColor = hexToRgba(sourceColor, 1);
 
           targetMap.forEach((connection, targetFile) => {
-            const targetCentroid = fileCentroids.get(targetFile);
+            const targetCentroid = getModuleCentroid(targetFile);
             if (!targetCentroid) return;
 
             const edgeKey = `${sourceFile}||${targetFile}`;
-            fileEdgeLines.push({
-              key: edgeKey,
-              sx: sourceCentroid.x,
-              sy: sourceCentroid.y,
-              tx: targetCentroid.x,
-              ty: targetCentroid.y,
-              label: connection.types.has("wildcard")
-                ? "namespace import"
-                : Array.from(connection.types).join(", "),
+            const label = connection.types.has("wildcard")
+              ? "namespace import"
+              : Array.from(connection.types).join(", ");
+
+            // Route through intermediate barrels (re-export pass-through)
+            const points: { x: number; y: number }[] = [
+              { x: sourceCentroid.x, y: sourceCentroid.y },
+            ];
+            Array.from(connection.via).forEach((barrel) => {
+              const barrelCentroid = getModuleCentroid(barrel);
+              if (barrelCentroid) points.push(barrelCentroid);
             });
+            points.push({ x: targetCentroid.x, y: targetCentroid.y });
 
             const isHoveredFile =
               hoveredFileKey && sourceFile === hoveredFileKey;
@@ -3892,15 +3953,25 @@ function App() {
             );
             const isWildcard = connection.types.has("wildcard");
 
-            context.beginPath();
-            context.moveTo(sourceCentroid.x, sourceCentroid.y);
-            context.lineTo(targetCentroid.x, targetCentroid.y);
-            context.strokeStyle = edgeColor;
-            context.lineWidth = isWildcard ? 5 : lineWidth;
-            context.globalAlpha =
-              isHoveredFile || isSelectedFile || isEdgeHovered ? 1 : edgeOpacity;
-            context.stroke();
-            context.globalAlpha = 1;
+            // Register each segment for hover detection (same key) and stroke,
+            // deduplicating segments shared between pass-through connections
+            for (let i = 0; i < points.length - 1; i++) {
+              fileEdgeLines.push({
+                key: edgeKey,
+                sx: points[i].x,
+                sy: points[i].y,
+                tx: points[i + 1].x,
+                ty: points[i + 1].y,
+                label: i === 0 ? label : "",
+              });
+              strokeSegment(
+                points[i],
+                points[i + 1],
+                edgeColor,
+                isWildcard ? 5 : lineWidth,
+                isHoveredFile || isSelectedFile || isEdgeHovered ? 1 : edgeOpacity,
+              );
+            }
           });
         });
 
@@ -3927,40 +3998,55 @@ function App() {
 
           if (!sourceCentroid) return;
 
-          const dx = edge.target.x - sourceCentroid.x;
-          const dy = edge.target.y - sourceCentroid.y;
-          const distance = Math.sqrt(dx * dx + dy * dy);
           const offset = 12;
 
-          let targetX = edge.target.x;
-          let targetY = edge.target.y;
+          // Route through intermediate barrels (re-export pass-through)
+          const points: { x: number; y: number }[] = [
+            { x: sourceCentroid.x, y: sourceCentroid.y },
+          ];
+          (edge.via || []).forEach((barrel: string) => {
+            const barrelCentroid = getModuleCentroid(barrel);
+            if (barrelCentroid) points.push(barrelCentroid);
+          });
+          points.push({ x: edge.target.x, y: edge.target.y });
 
-          if (distance > 0) {
-            targetX = sourceCentroid.x + (dx / distance) * (distance - offset);
-            targetY = sourceCentroid.y + (dy / distance) * (distance - offset);
+          // Shorten the last segment so the line stops before the target symbol
+          if (points.length >= 2) {
+            const last = points[points.length - 1];
+            const prev = points[points.length - 2];
+            const segDx = last.x - prev.x;
+            const segDy = last.y - prev.y;
+            const segDist = Math.sqrt(segDx * segDx + segDy * segDy);
+            if (segDist > 0) {
+              last.x = prev.x + (segDx / segDist) * Math.max(0, segDist - offset);
+              last.y = prev.y + (segDy / segDist) * Math.max(0, segDist - offset);
+            }
           }
 
           const namedKey = `named:${sourceKey}->${edge.target.id}`;
-          fileEdgeLines.push({ key: namedKey, sx: sourceCentroid.x, sy: sourceCentroid.y, tx: targetX, ty: targetY, label: edge.label });
-
-          context.beginPath();
-          context.moveTo(sourceCentroid.x, sourceCentroid.y);
-          context.lineTo(targetX, targetY);
-          context.strokeStyle = colorScale(
+          const namedColor = colorScale(
             folderMap.get(edge.source.id) || "root",
           ) as string;
-          context.lineWidth = 2;
           const isOutgoingFromHovered =
             hoveredFileKey && sourceKey === hoveredFileKey;
           const isOutgoingFromSelected =
             selectedFileKey && sourceKey === selectedFileKey;
           const isEdgeHovered = hoveredEdgeIds.has(namedKey);
-          context.globalAlpha =
+          const namedAlpha =
             isOutgoingFromHovered || isOutgoingFromSelected || isEdgeHovered
               ? 1
               : edgeOpacity;
-          context.stroke();
-          context.globalAlpha = 1;
+          for (let i = 0; i < points.length - 1; i++) {
+            fileEdgeLines.push({
+              key: namedKey,
+              sx: points[i].x,
+              sy: points[i].y,
+              tx: points[i + 1].x,
+              ty: points[i + 1].y,
+              label: i === 0 ? edge.label : "",
+            });
+            strokeSegment(points[i], points[i + 1], namedColor, 2, namedAlpha);
+          }
         });
 
         // Draw symbol-level edges from specific symbol nodes to target file centroids
@@ -4322,6 +4408,17 @@ function App() {
       mousePositionRef.current = { x: mouseX, y: mouseY };
 
       // Handle drag
+      if (draggedEmptyModule) {
+        const anchor = emptyModulePositionsRef.current.get(draggedEmptyModule);
+        if (anchor && draggedEmptyOffset) {
+          anchor.x = mouseX + draggedEmptyOffset.x;
+          anchor.y = mouseY + draggedEmptyOffset.y;
+          const s = 15;
+          polyBlocksRectsRef.current.rects.set(draggedEmptyModule, { x0: anchor.x - s, y0: anchor.y - s, x1: anchor.x + s, y1: anchor.y + s });
+        }
+        draw();
+        return;
+      }
       if (draggedGroup) {
         draggedGroup.forEach((n: any) => {
           if (n._dragOffset) {
@@ -4353,6 +4450,22 @@ function App() {
         if (dx * dx + dy * dy < hoverRadius) {
           found = node;
           break;
+        }
+      }
+
+      // Empty module hover (poly-blocks): pointer cursor over an empty block
+      let hoveredEmptyModule = false;
+      if (!found && viewMode === "poly-blocks") {
+        const pad = 15;
+        for (const [key, r] of polyBlocksRectsRef.current.rects) {
+          if (
+            emptyModulePositionsRef.current.has(key) &&
+            mouseX >= r.x0 - pad && mouseX <= r.x1 + pad &&
+            mouseY >= r.y0 - pad && mouseY <= r.y1 + pad
+          ) {
+            hoveredEmptyModule = true;
+            break;
+          }
         }
       }
 
@@ -4432,15 +4545,21 @@ function App() {
         hoveredNodeRef.current = found;
         canvas.style.cursor = found
           ? "pointer"
-          : hoveredEdgesList.length > 0
+          : hoveredEmptyModule
             ? "pointer"
-            : "default";
+            : hoveredEdgesList.length > 0
+              ? "pointer"
+              : "default";
         draw();
       }
 
       // Clear edge hover if node is hovered
       if (found) {
         setHoveredEdges([]);
+        draw();
+      } else if (hoveredEmptyModule) {
+        setHoveredEdges([]);
+        canvas.style.cursor = "pointer";
         draw();
       } else {
         setHoveredEdges(hoveredEdgesList);
@@ -4533,6 +4652,12 @@ function App() {
               });
             } else {
               draggedGroup = null;
+              // Empty module: drag its anchor position instead
+              const anchor = emptyModulePositionsRef.current.get(fileKey);
+              if (anchor) {
+                draggedEmptyModule = fileKey;
+                draggedEmptyOffset = { x: anchor.x - mouseX, y: anchor.y - mouseY };
+              }
             }
             break;
           }
@@ -4608,7 +4733,19 @@ function App() {
 
     const handleMouseUp = () => {
       isPanning = false;
-      if (draggedGroup) {
+      if (draggedEmptyModule) {
+        const anchor = emptyModulePositionsRef.current.get(draggedEmptyModule);
+        if (anchor) {
+          anchor.x = Math.round(anchor.x / 40) * 40;
+          anchor.y = Math.round(anchor.y / 40) * 40;
+          const s = 15;
+          polyBlocksRectsRef.current.rects.set(draggedEmptyModule, { x0: anchor.x - s, y0: anchor.y - s, x1: anchor.x + s, y1: anchor.y + s });
+        }
+        if (viewMode === "poly-blocks") savePolyBlocksPositions(filteredNodes);
+        draggedEmptyModule = null;
+        draggedEmptyOffset = null;
+        draw();
+      } else if (draggedGroup) {
         draggedGroup.forEach((n: any) => {
           n._dragOffset = undefined;
           snapToGrid(n);
@@ -4640,7 +4777,18 @@ function App() {
       isPanning = false;
       hoveredNodeRef.current = null;
       setHoveredEdges([]);
-      if (draggedGroup) {
+      if (draggedEmptyModule) {
+        const anchor = emptyModulePositionsRef.current.get(draggedEmptyModule);
+        if (anchor) {
+          anchor.x = Math.round(anchor.x / 40) * 40;
+          anchor.y = Math.round(anchor.y / 40) * 40;
+          const s = 15;
+          polyBlocksRectsRef.current.rects.set(draggedEmptyModule, { x0: anchor.x - s, y0: anchor.y - s, x1: anchor.x + s, y1: anchor.y + s });
+        }
+        if (viewMode === "poly-blocks") savePolyBlocksPositions(filteredNodes);
+        draggedEmptyModule = null;
+        draggedEmptyOffset = null;
+      } else if (draggedGroup) {
         draggedGroup.forEach((n: any) => {
           n._dragOffset = undefined;
           snapToGrid(n);

@@ -985,12 +985,19 @@ function resolveRelativeModulePath(
 // chains (export { x } from, export * from) to the defining files.
 // `inProgress` tracks only the current resolution path to cut cycles, so a
 // module re-exported from multiple entries is resolved on each visit.
+// Each resolved symbol carries `via`: the ordered list of intermediate barrel
+// modules the symbol passes through before reaching its defining file.
+interface ResolvedExport {
+  symbol: Symbol;
+  via: string[];
+}
+
 function collectResolvedExports(
   modulePath: string,
   moduleToSymbols: Map<string, Symbol[]>,
   moduleToReExports: Map<string, { module: string; symbols: string[] }[]>,
   inProgress: Set<string>,
-): Symbol[] {
+): ResolvedExport[] {
   const foundPath = moduleToSymbols.has(modulePath)
     ? modulePath
     : moduleToSymbols.has(modulePath.replace(/\.ts$/, "/index.ts"))
@@ -999,28 +1006,31 @@ function collectResolvedExports(
   if (!foundPath || inProgress.has(foundPath)) return [];
   inProgress.add(foundPath);
 
-  const result: Symbol[] = [];
-  result.push(...(moduleToSymbols.get(foundPath) || []).filter((s) => s.isExport));
+  const result: ResolvedExport[] = [];
+  (moduleToSymbols.get(foundPath) || [])
+    .filter((s) => s.isExport)
+    .forEach((symbol) => result.push({ symbol, via: [] }));
 
   const reExports = moduleToReExports.get(foundPath) || [];
   reExports.forEach((reExport) => {
     const targetPath = resolveRelativeModulePath(foundPath, reExport.module);
     if (!targetPath) return;
 
-    const resolvedSymbols = collectResolvedExports(
+    const resolved = collectResolvedExports(
       targetPath,
       moduleToSymbols,
       moduleToReExports,
       inProgress,
     );
 
-    if (reExport.symbols.length === 0) {
-      result.push(...resolvedSymbols);
-    } else {
-      result.push(
-        ...resolvedSymbols.filter((s) => reExport.symbols.includes(s.name)),
-      );
-    }
+    resolved.forEach((r) => {
+      if (
+        reExport.symbols.length === 0 ||
+        reExport.symbols.includes(r.symbol.name)
+      ) {
+        result.push({ symbol: r.symbol, via: [foundPath, ...r.via] });
+      }
+    });
   });
 
   inProgress.delete(foundPath);
@@ -1105,7 +1115,7 @@ export function buildGraphFromMinimal(data: ParsedData): {
       );
       if (!sourceSymbol) return;
 
-      targetExports.forEach((targetSymbol) => {
+      targetExports.forEach(({ symbol: targetSymbol }) => {
         const edgeKey = `${sourceSymbol.id}-${targetSymbol.id}`;
         if (!edgeKeyCount.has(edgeKey)) {
           edges.push({
@@ -1128,10 +1138,10 @@ export function buildGraphFromMinimal(data: ParsedData): {
     const isWildcard = importData.type === "wildcard" || !importData.symbols;
     const symbolsToConnect = isWildcard
       ? targetExports
-      : targetExports.filter((s) => importData.symbols!.includes(s.name));
+      : targetExports.filter((r) => importData.symbols!.includes(r.symbol.name));
 
     sourceSymbols.forEach((sourceSymbol) => {
-      symbolsToConnect.forEach((targetSymbol) => {
+      symbolsToConnect.forEach(({ symbol: targetSymbol, via }) => {
         const edgeKey = `${sourceSymbol.id}-${targetSymbol.id}`;
         if (!edgeKeyCount.has(edgeKey)) {
           edges.push({
@@ -1140,6 +1150,7 @@ export function buildGraphFromMinimal(data: ParsedData): {
             target: targetSymbol.id,
             type: importData.type,
             label: isWildcard ? "namespace import" : "import",
+            ...(via.length > 0 ? { via } : {}),
           });
           edgeKeyCount.set(edgeKey, 1);
         }
