@@ -468,6 +468,26 @@ if (getEndpointNode && maxRetriesAliasNode) {
   assert(!!graph.edges.find((e: any) => e.source === getEndpointNode.id && e.target === maxRetriesAliasNode.id), "edge getEndpoint -> MAX_RETRIES (aliased import)");
 }
 
+// --- Test: module-level import from an empty module (no symbols) ---
+const emptyImporterModule = data.modules.find((m) => m.id.endsWith("empty-import/empty-importer.ts"));
+assert(!!emptyImporterModule, "empty-import/empty-importer.ts is a module");
+assertEqual(emptyImporterModule.symbols.length, 0, "empty-import/empty-importer.ts has 0 symbols");
+const emptyImporterEdge = graph.edges.find((e: any) => e.source === "empty-import/empty-importer.ts" && e.moduleSource);
+assert(!!emptyImporterEdge, "empty module emits a module-level edge");
+if (emptyImporterEdge) {
+  assert(emptyImporterEdge.target.endsWith("constants.ts.API_URL"), "module-level edge targets constants.ts.API_URL");
+}
+
+// --- Test: namespace import from an empty module (no symbols) ---
+const emptyWildcardModule = data.modules.find((m) => m.id.endsWith("empty-import/empty-wildcard-importer.ts"));
+assert(!!emptyWildcardModule, "empty-import/empty-wildcard-importer.ts is a module");
+assertEqual(emptyWildcardModule.symbols.length, 0, "empty-import/empty-wildcard-importer.ts has 0 symbols");
+const emptyWildcardEdges = graph.edges.filter((e: any) => e.source === "empty-import/empty-wildcard-importer.ts" && e.moduleSource);
+assert(emptyWildcardEdges.length >= 3, "namespace import from empty module connects all exports");
+assert(emptyWildcardEdges.every((e: any) => e.type === "wildcard"), "namespace module-level edges are wildcard");
+assert(emptyWildcardEdges.some((e: any) => e.target.endsWith("constants.ts.API_URL")), "wildcard module-level edge reaches API_URL");
+assert(emptyWildcardEdges.some((e: any) => e.target.endsWith("constants.ts.TIMEOUT")), "wildcard module-level edge reaches TIMEOUT");
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

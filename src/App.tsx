@@ -1322,52 +1322,6 @@ function App() {
   );
 
   // Filter nodes and edges based on hidden folders, files, and symbols
-  const { filteredNodes, filteredEdges } = useMemo(() => {
-    const hiddenSet = hiddenPaths;
-
-    const visibleNodes = generatedNodes.filter((node: any) => {
-      const folder = node.data.folder || "root";
-      const file = node.data.file || "";
-
-      // Check if this specific symbol is hidden
-      if (hiddenSymbols.has(node.id)) {
-        return false;
-      }
-
-      // Check if this folder or any parent folder is hidden
-      const folderParts = folder.split("/");
-      for (let i = 0; i < folderParts.length; i++) {
-        const parentPath = folderParts.slice(0, i + 1).join("/");
-        if (hiddenSet.has(parentPath)) {
-          return false;
-        }
-      }
-
-      // Check if this specific file is hidden
-      const rawFolder = node.data.folder || "";
-      const filePath = file ? (rawFolder ? `${rawFolder}/${file}` : file) : rawFolder;
-      const filePathWithoutExt = filePath.replace(".ts", "");
-      if (hiddenSet.has(filePathWithoutExt)) {
-        return false;
-      }
-
-      return true;
-    });
-
-    const visibleNodeIds = new Set(visibleNodes.map((n: any) => n.id));
-
-    const visibleEdges = generatedEdges.filter((edge: any) => {
-      // Handle both string IDs and D3 node objects
-      const sourceId =
-        typeof edge.source === "string" ? edge.source : edge.source.id;
-      const targetId =
-        typeof edge.target === "string" ? edge.target : edge.target.id;
-      return visibleNodeIds.has(sourceId) && visibleNodeIds.has(targetId);
-    });
-
-    return { filteredNodes: visibleNodes, filteredEdges: visibleEdges };
-  }, [generatedNodes, generatedEdges, hiddenPaths, hiddenSymbols]);
-
   // Files with no symbols (empty modules/scripts, e.g. pure barrel index.ts).
   // In poly-blocks they render as isolated blocks, mirroring filteredNodes' visibility rules.
   const emptyFileGroups = useMemo(() => {
@@ -1403,6 +1357,59 @@ function App() {
 
   const emptyGroupsRef = useRef(emptyFileGroups);
   emptyGroupsRef.current = emptyFileGroups;
+
+  const { filteredNodes, filteredEdges } = useMemo(() => {
+    const hiddenSet = hiddenPaths;
+
+    const visibleNodes = generatedNodes.filter((node: any) => {
+      const folder = node.data.folder || "root";
+      const file = node.data.file || "";
+
+      // Check if this specific symbol is hidden
+      if (hiddenSymbols.has(node.id)) {
+        return false;
+      }
+
+      // Check if this folder or any parent folder is hidden
+      const folderParts = folder.split("/");
+      for (let i = 0; i < folderParts.length; i++) {
+        const parentPath = folderParts.slice(0, i + 1).join("/");
+        if (hiddenSet.has(parentPath)) {
+          return false;
+        }
+      }
+
+      // Check if this specific file is hidden
+      const rawFolder = node.data.folder || "";
+      const filePath = file ? (rawFolder ? `${rawFolder}/${file}` : file) : rawFolder;
+      const filePathWithoutExt = filePath.replace(".ts", "");
+      if (hiddenSet.has(filePathWithoutExt)) {
+        return false;
+      }
+
+      return true;
+    });
+
+    const visibleNodeIds = new Set(visibleNodes.map((n: any) => n.id));
+    const visibleEmptyFileKeys = new Set(emptyFileGroups.map((g) => g.key));
+
+    const visibleEdges = generatedEdges.filter((edge: any) => {
+      // Module-level source: the source file is a visible empty module
+      if (edge.moduleSource) {
+        const targetId =
+          typeof edge.target === "string" ? edge.target : edge.target.id;
+        return visibleNodeIds.has(targetId) && visibleEmptyFileKeys.has(edge.source);
+      }
+      // Handle both string IDs and D3 node objects
+      const sourceId =
+        typeof edge.source === "string" ? edge.source : edge.source.id;
+      const targetId =
+        typeof edge.target === "string" ? edge.target : edge.target.id;
+      return visibleNodeIds.has(sourceId) && visibleNodeIds.has(targetId);
+    });
+
+    return { filteredNodes: visibleNodes, filteredEdges: visibleEdges };
+  }, [generatedNodes, generatedEdges, hiddenPaths, hiddenSymbols, emptyFileGroups]);
 
   const handleHoverPath = useCallback(
     (path: string | null, isFolder: boolean = false) => {
@@ -3835,11 +3842,24 @@ function App() {
         filteredNodes.forEach((node: any) => nodeMap.set(node.id, node));
 
         const resolvedEdges = filteredEdges
-          .map((edge: any) => ({
-            ...edge,
-            source: typeof edge.source === "string" ? nodeMap.get(edge.source) : edge.source,
-            target: typeof edge.target === "string" ? nodeMap.get(edge.target) : edge.target,
-          }))
+          .map((edge: any) => {
+            let source =
+              typeof edge.source === "string"
+                ? nodeMap.get(edge.source)
+                : edge.source;
+            // Module-level source: anchor at the source file (empty module)
+            if (!source && edge.moduleSource) {
+              const parts = edge.source.split("/");
+              const file = parts.pop() || "";
+              const folder = parts.join("/");
+              source = { id: edge.source, data: { file, folder }, x: 0, y: 0 };
+            }
+            const target =
+              typeof edge.target === "string"
+                ? nodeMap.get(edge.target)
+                : edge.target;
+            return { ...edge, source, target };
+          })
           .filter((edge: any) => edge.source && edge.target);
 
         // Separate edge types for polygon view:
@@ -3911,7 +3931,7 @@ function App() {
 
         // Draw single edges for file-to-file connections between file centroids
         fileConnections.forEach((targetMap, sourceFile) => {
-          const sourceCentroid = fileCentroids.get(sourceFile);
+          const sourceCentroid = getModuleCentroid(sourceFile);
           if (!sourceCentroid) return;
 
           // Get folder color for the source file
@@ -4003,7 +4023,7 @@ function App() {
           const sourceKey = sourceFolder
             ? `${sourceFolder}/${edge.source.data.file}`
             : edge.source.data.file;
-          const sourceCentroid = fileCentroids.get(sourceKey);
+          const sourceCentroid = getModuleCentroid(sourceKey);
 
           if (!sourceCentroid) return;
 
@@ -4034,7 +4054,10 @@ function App() {
 
           const namedKey = `named:${sourceKey}->${edge.target.id}`;
           const namedColor = colorScale(
-            folderMap.get(edge.source.id) || "root",
+            folderMap.get(edge.source.id) ||
+              (sourceKey.includes("/")
+                ? sourceKey.slice(0, sourceKey.lastIndexOf("/"))
+                : "root"),
           ) as string;
           const isTypeOnly = edge.type === "type";
           const isOutgoingFromHovered =

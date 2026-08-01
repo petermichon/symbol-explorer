@@ -1152,6 +1152,34 @@ export function buildGraphFromMinimal(data: ParsedData): {
       ? targetExports
       : targetExports.filter((r) => importData.symbols!.includes(r.symbol.name));
 
+    if (sourceSymbols.length === 0) {
+      // Empty module with a top-level import: the whole module imports, so
+      // emit a module-level edge anchored on the source file
+      symbolsToConnect.forEach(({ symbol: targetSymbol, via }) => {
+        const edgeKey = `${importData.source}-${targetSymbol.id}`;
+        if (!edgeKeyCount.has(edgeKey)) {
+          const edgeType = importData.type;
+          edges.push({
+            id: `e-${edgeKey}`,
+            source: importData.source,
+            target: targetSymbol.id,
+            type: edgeType,
+            label: edgeType === "wildcard"
+              ? "namespace import"
+              : edgeType === "type"
+                ? "type-only import"
+                : edgeType === "dynamic"
+                  ? "dynamic import"
+                  : "import",
+            moduleSource: true,
+            ...(via.length > 0 ? { via } : {}),
+          });
+          edgeKeyCount.set(edgeKey, 1);
+        }
+      });
+      return;
+    }
+
     sourceSymbols.forEach((sourceSymbol) => {
       symbolsToConnect.forEach(({ symbol: targetSymbol, via }) => {
         const edgeKey = `${sourceSymbol.id}-${targetSymbol.id}`;
