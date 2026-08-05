@@ -965,6 +965,35 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
         });
       }
     });
+
+    // Re-export-only modules (0 symbols) still depend on what they re-export.
+    // Emit module-level import entries so the dependency appears in the graph.
+    if (symbols.length === 0) {
+      reExports.forEach((reExport) => {
+        if (!reExport.module.startsWith(".")) return; // external, skip
+        const parts = reExport.module.split("/");
+        const basePath = dirPath ? dirPath.split("/") : [];
+        parts.forEach((part) => {
+          if (part === "..") {
+            basePath.pop();
+          } else if (part !== ".") {
+            basePath.push(part);
+          }
+        });
+        const resolvedPath = basePath.join("/");
+        const targetPath =
+          resolvedPath.endsWith(".ts") || resolvedPath.endsWith(".tsx")
+            ? resolvedPath
+            : `${resolvedPath}.ts`;
+
+        imports.push({
+          source: file.path,
+          target: targetPath,
+          type: "re-export",
+          symbols: reExport.symbols.length > 0 ? reExport.symbols : undefined,
+        });
+      });
+    }
   });
 
   return { modules, scripts, imports };
@@ -1170,7 +1199,9 @@ export function buildGraphFromMinimal(data: ParsedData): {
                 ? "type-only import"
                 : edgeType === "dynamic"
                   ? "dynamic import"
-                  : "import",
+                  : edgeType === "re-export"
+                    ? "re-export"
+                    : "import",
             moduleSource: true,
             ...(via.length > 0 ? { via } : {}),
           });
@@ -1196,7 +1227,9 @@ export function buildGraphFromMinimal(data: ParsedData): {
                 ? "type-only import"
                 : edgeType === "dynamic"
                   ? "dynamic import"
-                  : "import",
+                  : edgeType === "re-export"
+                    ? "re-export"
+                    : "import",
             ...(via.length > 0 ? { via } : {}),
           });
           edgeKeyCount.set(edgeKey, 1);

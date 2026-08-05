@@ -488,6 +488,21 @@ assert(emptyWildcardEdges.every((e: any) => e.type === "wildcard"), "namespace m
 assert(emptyWildcardEdges.some((e: any) => e.target.endsWith("constants.ts.API_URL")), "wildcard module-level edge reaches API_URL");
 assert(emptyWildcardEdges.some((e: any) => e.target.endsWith("constants.ts.TIMEOUT")), "wildcard module-level edge reaches TIMEOUT");
 
+// --- Test: re-export-only module shows its re-export dependency ---
+// usecases/sites/load-analytics.ts in nohonu re-exports but shows no edges.
+// A re-export (export ... from) is a real dependency that should appear as a
+// module-level edge, even when the file has no symbols and no imports.
+const reExportOnlyModule = data.modules.find((m) => m.id.endsWith("re-export-only/load-analytics.ts"));
+assert(!!reExportOnlyModule, "re-export-only/load-analytics.ts is a module");
+assertEqual(reExportOnlyModule.symbols.length, 0, "re-export-only/load-analytics.ts has 0 symbols");
+
+const reExportOnlyEdge = graph.edges.find((e: any) => e.source === "re-export-only/load-analytics.ts");
+assert(!!reExportOnlyEdge, "re-export-only module emits a module-level edge");
+if (reExportOnlyEdge) {
+  assert(reExportOnlyEdge.moduleSource, "re-export-only edge is module-level");
+  assert(reExportOnlyEdge.target.endsWith("analytics/load-analytics.ts.loadAnalytics"), "re-export-only edge targets the re-exported symbol");
+}
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
