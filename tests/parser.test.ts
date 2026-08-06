@@ -13,7 +13,7 @@ function collectFiles(dir: string): FileData[] {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       files.push(...collectFiles(full));
-    } else if (extname(full) === ".ts") {
+    } else if (extname(full) === ".ts" || extname(full) === ".tsx") {
       files.push({ path: full.replace(testDir + "/", ""), content: readFileSync(full, "utf-8") });
     }
   }
@@ -501,6 +501,37 @@ assert(!!reExportOnlyEdge, "re-export-only module emits a module-level edge");
 if (reExportOnlyEdge) {
   assert(reExportOnlyEdge.moduleSource, "re-export-only edge is module-level");
   assert(reExportOnlyEdge.target.endsWith("analytics/load-analytics.ts.loadAnalytics"), "re-export-only edge targets the re-exported symbol");
+}
+
+// --- Test: TypeScript frontend (.tsx with JSX) ---
+const profileModule = data.modules.find((m) => m.id.endsWith("frontend/Profile.tsx"));
+assert(!!profileModule, "frontend/Profile.tsx is a module");
+if (profileModule) {
+  const profileSymbol = profileModule.symbols.find((s) => s.name === "Profile");
+  assert(!!profileSymbol, "Profile component symbol exists");
+  if (profileSymbol) assertEqual(profileSymbol.type, "function", "Profile is type function");
+}
+const profileTypeImport = data.imports.find((i) => i.source.endsWith("frontend/Profile.tsx") && i.target.endsWith("types.ts"));
+assert(!!profileTypeImport, "Profile.tsx has a type import to types");
+if (profileTypeImport) {
+  assertEqual(profileTypeImport.type, "type", "Profile.tsx type import is categorized as 'type'");
+  assertIncludes(profileTypeImport.symbols || [], "User", "Profile.tsx imports User");
+}
+const profileNode = graph.nodes.find((n: any) => n.id.endsWith("frontend/Profile.tsx.Profile"));
+const profileUserNode = graph.nodes.find((n: any) => n.id.endsWith("types/index.ts.User"));
+if (profileNode && profileUserNode) {
+  const edge = graph.edges.find((e: any) => e.source === profileNode.id && e.target === profileUserNode.id);
+  assert(!!edge, "edge Profile -> User (from .tsx)");
+  if (edge) assertEqual(edge.type, "type", "Profile -> User edge is type 'type'");
+}
+
+// --- Test: extensionless import resolving to a .tsx file ---
+const tsxImport = data.imports.find((i) => i.source.endsWith("frontend/uses-app.ts"));
+assert(!!tsxImport, "uses-app.ts has an import");
+const renderNode = graph.nodes.find((n: any) => n.id.endsWith("frontend/uses-app.ts.render"));
+const appNode = graph.nodes.find((n: any) => n.id.endsWith("frontend/app.tsx.App"));
+if (renderNode && appNode) {
+  assert(!!graph.edges.find((e: any) => e.source === renderNode.id && e.target === appNode.id), "edge render -> App (import resolves to .tsx)");
 }
 
 // --- Summary ---

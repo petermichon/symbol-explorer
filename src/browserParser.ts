@@ -106,7 +106,7 @@ export interface FileData {
   content: string;
 }
 
-export function extractImports(content: string): {
+export function extractImports(content: string, fileName: string = "temp.ts"): {
   imports: string[];
   symbols: string[];
   wildcardImports: string[];
@@ -120,7 +120,7 @@ export function extractImports(content: string): {
   }[];
 } {
   const sourceFile = ts.createSourceFile(
-    "temp.ts",
+    fileName,
     content,
     ts.ScriptTarget.Latest,
     true,
@@ -486,7 +486,7 @@ export function buildViewDataFromFiles(files: FileData[]): ViewData {
 
   // Extract re-exports from all files
   files.forEach((file) => {
-    const { reExports } = extractImports(file.content);
+    const { reExports } = extractImports(file.content, file.path);
     if (reExports.length > 0) {
       fileToReExports.set(file.path, reExports);
     }
@@ -559,7 +559,7 @@ export function buildViewDataFromFiles(files: FileData[]): ViewData {
     if (!sourceSymbols) return;
 
     const { imports, wildcardImports, importMap, dynamicImports } =
-      extractImports(file.content);
+      extractImports(file.content, file.path);
     const allImports = [...imports, ...wildcardImports];
 
     // Handle dynamic imports
@@ -856,7 +856,7 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
       dynamicImports,
       importMap,
       reExports,
-    } = extractImports(file.content);
+    } = extractImports(file.content, file.path);
 
     // Re-export declarations (`export ... from`) make a file a module, even
     // without any declared symbols or import statements (e.g. pure barrels)
@@ -1039,11 +1039,7 @@ function collectResolvedExports(
   moduleToReExports: Map<string, { module: string; symbols: string[] }[]>,
   inProgress: Set<string>,
 ): ResolvedExport[] {
-  const foundPath = moduleToSymbols.has(modulePath)
-    ? modulePath
-    : moduleToSymbols.has(modulePath.replace(/\.ts$/, "/index.ts"))
-      ? modulePath.replace(/\.ts$/, "/index.ts")
-      : undefined;
+  const foundPath = findExistingModule(modulePath, moduleToSymbols);
   if (!foundPath || inProgress.has(foundPath)) return [];
   inProgress.add(foundPath);
 
@@ -1078,18 +1074,30 @@ function collectResolvedExports(
   return result;
 }
 
-// Resolve an import target to its module symbols, falling back to an index.ts
-// barrel when the direct path doesn't exist (e.g. "./types" -> "types/index.ts")
+// Find the actual module path for a (possibly guessed) target, trying .ts,
+// .tsx and index variants (e.g. "./app" -> app.ts / app.tsx / app/index.ts / app/index.tsx)
+function findExistingModule(
+  targetPath: string,
+  moduleToSymbols: Map<string, Symbol[]>,
+): string | undefined {
+  if (moduleToSymbols.has(targetPath)) return targetPath;
+  const tsx = targetPath.replace(/\.ts$/, ".tsx");
+  if (tsx !== targetPath && moduleToSymbols.has(tsx)) return tsx;
+  const base = targetPath.replace(/\.ts$/, "");
+  for (const candidate of [`${base}/index.ts`, `${base}/index.tsx`]) {
+    if (moduleToSymbols.has(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+// Resolve an import target to its module symbols, falling back to .tsx and
+// index barrels when the direct path doesn't exist
 function findTargetSymbols(
   targetPath: string,
   moduleToSymbols: Map<string, Symbol[]>,
 ): Symbol[] | undefined {
-  const direct = moduleToSymbols.get(targetPath);
-  if (direct) return direct;
-  if (!targetPath.endsWith("/index.ts")) {
-    return moduleToSymbols.get(targetPath.replace(/\.ts$/, "/index.ts"));
-  }
-  return undefined;
+  const found = findExistingModule(targetPath, moduleToSymbols);
+  return found ? moduleToSymbols.get(found) : undefined;
 }
 
 // Build graph nodes and edges from minimal data format
