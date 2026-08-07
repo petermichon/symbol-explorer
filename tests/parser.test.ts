@@ -534,6 +534,25 @@ if (renderNode && appNode) {
   assert(!!graph.edges.find((e: any) => e.source === renderNode.id && e.target === appNode.id), "edge render -> App (import resolves to .tsx)");
 }
 
+// --- Test: default export + default import (routes/signup -> pages/Signup) ---
+const signupPage = data.modules.find((m) => m.id.endsWith("frontend/pages/Signup.tsx"));
+assert(!!signupPage, "frontend/pages/Signup.tsx is a module");
+if (signupPage) {
+  const signupSymbol = signupPage.symbols.find((s) => s.name === "Signup");
+  assert(!!signupSymbol, "Signup symbol exists");
+  if (signupSymbol) assertEqual(signupSymbol.isExport, true, "Signup is marked as export (default export)");
+}
+const routeNode = graph.nodes.find((n: any) => n.id.endsWith("frontend/routes/signup.tsx.Route"));
+const signupPageNode = graph.nodes.find((n: any) => n.id.endsWith("frontend/pages/Signup.tsx.Signup"));
+if (routeNode && signupPageNode) {
+  const edge = graph.edges.find((e: any) => e.source === routeNode.id && e.target === signupPageNode.id);
+  assert(!!edge, "edge Route -> Signup (default import)");
+  if (edge) {
+    assertEqual(edge.label, "default import", "Route -> Signup edge label is 'default import'");
+    assert(edge.defaultImport, "Route -> Signup edge is marked as default import");
+  }
+}
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

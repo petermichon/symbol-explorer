@@ -11,6 +11,7 @@ export interface ImportData {
   type: "import" | "wildcard" | "type" | "re-export" | "dynamic";
   containingFunction?: string;
   symbols?: string[];
+  defaultImport?: boolean;
 }
 
 export interface Symbol {
@@ -18,6 +19,7 @@ export interface Symbol {
   name: string;
   type: "function" | "class" | "variable" | "interface" | "type" | "enum";
   isExport: boolean;
+  isDefaultExport?: boolean;
   hasUnknownDynamicImport?: boolean;
 }
 
@@ -83,6 +85,7 @@ export interface SymbolNode {
   file: string;
   folder: string;
   isExport: boolean;
+  isDefaultExport?: boolean;
   hasUnknownDynamicImport?: boolean;
 }
 
@@ -111,6 +114,7 @@ export function extractImports(content: string, fileName: string = "temp.ts"): {
   symbols: string[];
   wildcardImports: string[];
   typeOnlyImports: string[];
+  defaultImports: string[];
   importMap: Map<string, string[]>;
   reExports: { module: string; symbols: string[] }[];
   dynamicImports: {
@@ -129,6 +133,7 @@ export function extractImports(content: string, fileName: string = "temp.ts"): {
   const symbols: string[] = [];
   const wildcardImports: string[] = [];
   const typeOnlyImports: string[] = [];
+  const defaultImports: string[] = [];
   const importMap = new Map<string, string[]>();
   const reExports: { module: string; symbols: string[] }[] = [];
   const dynamicImports: {
@@ -158,6 +163,11 @@ export function extractImports(content: string, fileName: string = "temp.ts"): {
       // Type-only imports (import type { ... }) are erased at runtime
       if (node.importClause?.isTypeOnly) {
         typeOnlyImports.push(moduleSpecifier);
+      }
+
+      // Default imports (import X from '...')
+      if (node.importClause?.name) {
+        defaultImports.push(moduleSpecifier);
       }
 
       if (node.importClause && node.importClause.namedBindings) {
@@ -248,6 +258,7 @@ export function extractImports(content: string, fileName: string = "temp.ts"): {
     symbols,
     wildcardImports,
     typeOnlyImports,
+    defaultImports,
     importMap,
     reExports,
     dynamicImports,
@@ -291,27 +302,37 @@ export function extractSymbolsFromFile(
   function visit(node: ts.Node) {
     if (ts.isFunctionDeclaration(node) && node.name) {
       const baseId = getBaseId(node.name.text);
+      const isExport =
+        node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ??
+        false;
       symbols.push({
         id: getUniqueId(baseId),
         name: node.name.text,
         type: "function",
         file: fileName,
         folder,
-        isExport:
-          node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ??
-          false,
+        isExport,
+        isDefaultExport:
+          isExport &&
+          (node.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) ??
+            false),
       });
     } else if (ts.isClassDeclaration(node) && node.name) {
       const baseId = getBaseId(node.name.text);
+      const isExport =
+        node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ??
+        false;
       symbols.push({
         id: getUniqueId(baseId),
         name: node.name.text,
         type: "class",
         file: fileName,
         folder,
-        isExport:
-          node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ??
-          false,
+        isExport,
+        isDefaultExport:
+          isExport &&
+          (node.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) ??
+            false),
       });
     } else if (ts.isVariableStatement(node) && isTopLevel(node)) {
       node.declarationList.declarations.forEach((decl) => {
@@ -397,6 +418,16 @@ export function extractSymbolsFromFile(
           existing.isExport = true;
         }
       });
+    } else if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      // export default <identifier>
+      const expr = node.expression;
+      if (expr && ts.isIdentifier(expr)) {
+        const existing = symbols.find((s) => s.name === expr.text);
+        if (existing) {
+          existing.isExport = true;
+          existing.isDefaultExport = true;
+        }
+      }
     }
 
     ts.forEachChild(node, visit);
@@ -853,6 +884,7 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
       imports: fileImports,
       wildcardImports,
       typeOnlyImports,
+      defaultImports,
       dynamicImports,
       importMap,
       reExports,
@@ -906,12 +938,14 @@ export function parseFilesMinimal(files: FileData[]): ParsedData {
         const importedSymbols = importMap.get(importPath);
         const isWildcard = wildcardImports.includes(importPath);
         const isTypeOnly = !isWildcard && typeOnlyImports.includes(importPath);
+        const isDefault = defaultImports.includes(importPath);
 
         imports.push({
           source: file.path,
           target: targetPath,
           type: isWildcard ? "wildcard" : isTypeOnly ? "type" : "import",
           symbols: isWildcard || !importedSymbols ? undefined : importedSymbols,
+          ...(isDefault ? { defaultImport: true } : {}),
         });
       }
     });
@@ -1100,6 +1134,15 @@ function findTargetSymbols(
   return found ? moduleToSymbols.get(found) : undefined;
 }
 
+function edgeLabel(edgeType: string, isDefault: boolean): string {
+  if (edgeType === "wildcard") return "namespace import";
+  if (isDefault) return "default import";
+  if (edgeType === "type") return "type-only import";
+  if (edgeType === "dynamic") return "dynamic import";
+  if (edgeType === "re-export") return "re-export";
+  return "import";
+}
+
 // Build graph nodes and edges from minimal data format
 export function buildGraphFromMinimal(data: ParsedData): {
   nodes: any[];
@@ -1184,10 +1227,22 @@ export function buildGraphFromMinimal(data: ParsedData): {
     const sourceSymbols = moduleToSymbols.get(importData.source);
     if (!sourceSymbols) return;
 
-    const isWildcard = importData.type === "wildcard" || !importData.symbols;
-    const symbolsToConnect = isWildcard
-      ? targetExports
-      : targetExports.filter((r) => importData.symbols!.includes(r.symbol.name));
+    const isWildcard =
+      importData.type === "wildcard" ||
+      (!importData.symbols && !importData.defaultImport);
+    let symbolsToConnect: ResolvedExport[];
+    if (importData.defaultImport) {
+      // Default import: connect to the target's default export, falling back
+      // to all exports when the default isn't recognized
+      const defaultExports = targetExports.filter((r) => r.symbol.isDefaultExport);
+      symbolsToConnect = defaultExports.length > 0 ? defaultExports : targetExports;
+    } else if (isWildcard) {
+      symbolsToConnect = targetExports;
+    } else {
+      symbolsToConnect = targetExports.filter((r) =>
+        importData.symbols!.includes(r.symbol.name),
+      );
+    }
 
     if (sourceSymbols.length === 0) {
       // Empty module with a top-level import: the whole module imports, so
@@ -1201,16 +1256,9 @@ export function buildGraphFromMinimal(data: ParsedData): {
             source: importData.source,
             target: targetSymbol.id,
             type: edgeType,
-            label: edgeType === "wildcard"
-              ? "namespace import"
-              : edgeType === "type"
-                ? "type-only import"
-                : edgeType === "dynamic"
-                  ? "dynamic import"
-                  : edgeType === "re-export"
-                    ? "re-export"
-                    : "import",
+            label: edgeLabel(edgeType, !!importData.defaultImport),
             moduleSource: true,
+            ...(importData.defaultImport ? { defaultImport: true } : {}),
             ...(via.length > 0 ? { via } : {}),
           });
           edgeKeyCount.set(edgeKey, 1);
@@ -1229,15 +1277,8 @@ export function buildGraphFromMinimal(data: ParsedData): {
             source: sourceSymbol.id,
             target: targetSymbol.id,
             type: edgeType,
-            label: edgeType === "wildcard"
-              ? "namespace import"
-              : edgeType === "type"
-                ? "type-only import"
-                : edgeType === "dynamic"
-                  ? "dynamic import"
-                  : edgeType === "re-export"
-                    ? "re-export"
-                    : "import",
+            label: edgeLabel(edgeType, !!importData.defaultImport),
+            ...(importData.defaultImport ? { defaultImport: true } : {}),
             ...(via.length > 0 ? { via } : {}),
           });
           edgeKeyCount.set(edgeKey, 1);
