@@ -1,6 +1,6 @@
 # Symbol Explorer
 
-Visualizes symbol-level access coverage as an interactive graph.
+Visualizes symbol-level access coverage of **TypeScript codebases** as an interactive graph.
 
 ## Concept
 
@@ -14,7 +14,8 @@ This is different from traditional dependency graphs that show file structure or
 
 - **Intra-file edges**: All top-level symbols in the same file can access each other (bidirectional edges)
 - **Inter-file edges**: Symbols in importing files can only access exported symbols from imported files
-- **Re-exports**: Skipped in favor of showing actual symbol locations
+- **Re-exports**: Routed through their defining modules (barrels) so edges point at real symbol locations
+- **Type-only imports**: Rendered as dashed edges (erased at runtime)
 
 ### What it's useful for
 
@@ -29,10 +30,14 @@ npm install
 npm run dev
 ```
 
+Then open the app and **select a project directory** (uses the browser File System Access API, so a Chromium-based browser is required). The graph is built from the TypeScript (`.ts`/`.tsx`) files in that directory.
+
 ## Features
 
-- Interactive dependency graph using D3.js force simulation
-- Visualizes symbol-level access relationships
-- Drag nodes, zoom, and pan the graph
-- Color-coded by folder/module
-- Hover labels show symbol name and file path
+- Loads a local project directory and parses it with the TypeScript compiler
+- Multiple graph views: force simulation, circles, boxes, polygon/poly-block layouts, oriented rectangles, and parametric curve modes
+- Module and symbol tree sidebar with expand/collapse and hide/show
+- Re-export routing through barrel modules; empty modules shown as draggable blocks
+- Drag nodes, zoom, and pan; color-coded by folder/module
+- Type-only imports shown as dashed edges
+- Persists directory handles (IndexedDB) and layout/UI state (localStorage)
